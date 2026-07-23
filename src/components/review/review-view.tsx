@@ -21,6 +21,7 @@ import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { deriveQueryTitle, makeQueryFileName } from "@/lib/wiki-filename"
 import { useTranslation } from "react-i18next"
 import { parseReviewAction } from "@/lib/review-actions"
+import { quoteYamlString } from "@/lib/yaml-string"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -78,7 +79,7 @@ export function ReviewView() {
         const { date, fileName } = makeQueryFileName(title)
         const filePath = `${pp}/wiki/queries/${fileName}`
 
-        const frontmatter = `---\ntype: query\ntitle: "${title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\n---\n\n`
+        const frontmatter = `---\ntype: query\ntitle: ${quoteYamlString(title)}\ncreated: ${date}\ntags: []\n---\n\n`
         const pageContent = frontmatter + cleanContent
         await writeFile(filePath, pageContent)
 
@@ -173,7 +174,7 @@ export function ReviewView() {
           const dir = pageType === "query" ? "queries" : pageType === "entity" ? "entities" : pageType === "concept" ? "concepts" : "queries"
           const filePath = `${pp}/wiki/${dir}/${fileName}`
 
-          const frontmatter = `---\ntype: ${pageType}\ntitle: "${title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
+          const frontmatter = `---\ntype: ${pageType}\ntitle: ${quoteYamlString(title)}\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
           const body = `# ${title}\n\n${item.description}\n`
           const pageContent = frontmatter + body
           await writeFile(filePath, pageContent)

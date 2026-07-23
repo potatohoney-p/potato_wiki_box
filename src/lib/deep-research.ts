@@ -9,6 +9,7 @@ import { useReviewStore } from "@/stores/review-store"
 import { normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 import { makeQueryFileName } from "@/lib/wiki-filename"
+import { quoteYamlString } from "@/lib/yaml-string"
 
 const MAX_RESEARCH_SOURCES = 20
 
@@ -287,7 +288,7 @@ async function executeResearch(
     const pageContent = [
       "---",
       `type: query`,
-      `title: "Research: ${topic.replace(/"/g, '\\"')}"`,
+      `title: ${quoteYamlString(`Research: ${topic}`)}`,
       `created: ${date}`,
       `origin: deep-research`,
       `tags: [research]`,

@@ -125,6 +125,43 @@ describe("MinerU API helpers", () => {
       .resolves.toContain("| A | &#9999999999; | A | &#xFFFFFFF; |")
   })
 
+  it("decodes entities once and neutralizes markup in HTML table cells", () => {
+    const markdown = __mineruTest.convertHtmlTablesToMarkdown([
+      "<table>",
+      "<tr><td>",
+      String.raw`&amp;lt;script&amp;gt; &lt;script&gt;alert(1)&lt;/script&gt;`,
+      String.raw`<script>run()</script> A\B|C`,
+      "</td></tr>",
+      "</table>",
+    ].join(""))
+
+    expect(markdown).toContain("&lt;script&gt;")
+    expect(markdown).not.toContain("<script>")
+    expect(markdown).toContain("run()")
+    expect(markdown).toContain(String.raw`A\\B\|C`)
+  })
+
+  it("preserves malformed tag-like text without emitting raw HTML", () => {
+    const markdown = __mineruTest.convertHtmlTablesToMarkdown(
+      "<table><tr><td>2 < 3 and <script</td></tr></table>",
+    )
+
+    expect(markdown).toContain("| 2 &lt; 3 and &lt;script |")
+  })
+
+  it("drops active-content image sources from HTML table cells", () => {
+    const markdown = __mineruTest.convertHtmlTablesToMarkdown([
+      "<table><tr><td>",
+      "<img src=\"javascript&#58;alert(1)\" alt=\"unsafe\">",
+      "<img src=\"data:image/svg+xml;base64,PHN2Zz4=\" alt=\"svg\">",
+      "</td></tr></table>",
+    ].join(""))
+
+    expect(markdown).not.toContain("javascript")
+    expect(markdown).not.toContain("data:image/svg+xml")
+    expect(markdown).not.toContain("![")
+  })
+
   it("does not convert HTML tables inside fenced code blocks", async () => {
     const code = [
       "```html",

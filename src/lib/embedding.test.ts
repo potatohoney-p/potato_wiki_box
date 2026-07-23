@@ -563,6 +563,32 @@ describe("fetchEmbedding — provider wire formats", () => {
     })
   })
 
+  it("does not classify a deceptive Google hostname as the native API", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: [{ embedding: [0.4] }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com.attacker.example/v1/embeddings",
+      apiKey: "provider-key",
+      model: "text-embedding",
+    })
+
+    expect(out).toEqual([0.4])
+    const [url, opts] = mockHttpFetch.mock.calls[0]
+    expect(url).toBe("https://generativelanguage.googleapis.com.attacker.example/v1/embeddings")
+    expect((opts?.headers as Record<string, string>).Authorization).toBe("Bearer provider-key")
+    expect((opts?.headers as Record<string, string>)["x-goog-api-key"]).toBeUndefined()
+    expect(JSON.parse(String(opts?.body))).toEqual({
+      model: "text-embedding",
+      input: "hello",
+    })
+  })
+
   it("accepts a full Gemini model embedContent endpoint", async () => {
     mockHttpFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ embedding: { values: [1, 2] } }), {

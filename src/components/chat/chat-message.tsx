@@ -28,6 +28,7 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { quoteYamlString } from "@/lib/yaml-string"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -153,8 +154,7 @@ function CopyButton({ content }: { content: string }) {
 
   const handleCopy = useCallback(async () => {
     // Strip HTML comments and thinking blocks before copying
-    const clean = content
-      .replace(/<!--.*?-->/gs, "")
+    const clean = stripHtmlComments(content)
       .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
       .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
       .trim()
@@ -197,8 +197,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       const filePath = `${pp}/wiki/queries/${fileName}`
 
       // Strip hidden sources comment and thinking blocks from content
-      const cleanContent = content
-        .replace(/<!--\s*sources:.*?-->/g, "")
+      const cleanContent = stripHtmlComments(content)
         .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
         .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
         .trimEnd()
@@ -206,7 +205,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       const frontmatter = [
         "---",
         `type: query`,
-        `title: "${title.replace(/"/g, '\\"')}"`,
+        `title: ${quoteYamlString(title)}`,
         `created: ${date}`,
         `tags: []`,
         "---",

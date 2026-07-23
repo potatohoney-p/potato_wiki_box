@@ -234,8 +234,15 @@ function isNonEmptyNumberArray(value: unknown): value is number[] {
 
 function isGoogleEmbeddingConfig(cfg: EmbeddingConfig): boolean {
   const endpoint = cfg.endpoint.toLowerCase()
-  return endpoint.includes("generativelanguage.googleapis.com")
-    || /:embedcontent(\?|$)/i.test(endpoint)
+  let isOfficialGoogleHost = false
+  try {
+    isOfficialGoogleHost = new URL(cfg.endpoint).hostname.toLowerCase()
+      === "generativelanguage.googleapis.com"
+  } catch {
+    // Custom gateways can still opt into the Gemini wire format by using
+    // an explicit :embedContent endpoint.
+  }
+  return isOfficialGoogleHost || /:embedcontent(\?|$)/i.test(endpoint)
 }
 
 function isVolcengineEmbeddingEndpoint(endpoint: string): boolean {

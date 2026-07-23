@@ -1,6 +1,7 @@
 import { createDirectory, fileExists, writeFile } from "@/commands/fs"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { makeQuerySlug } from "@/lib/wiki-filename"
+import { quoteYamlString } from "@/lib/yaml-string"
 
 export function lintLinkTarget(target: string): string {
   return normalizePath(target)
@@ -82,7 +83,7 @@ export async function ensureBrokenLinkStub(
   const content = [
     "---",
     "type: query",
-    `title: "${title.replace(/"/g, '\\"')}"`,
+    `title: ${quoteYamlString(title)}`,
     `created: ${date}`,
     `updated: ${date}`,
     "tags: [stub, lint]",

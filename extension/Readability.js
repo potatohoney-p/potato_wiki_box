@@ -472,13 +472,31 @@ Readability.prototype = {
       return uri;
     }
 
+    function toSafeAbsoluteLink(uri) {
+      var absolute = toAbsoluteURI(uri);
+      try {
+        var protocol = new URL(absolute, baseURI).protocol.toLowerCase();
+        if (
+          protocol === "http:" ||
+          protocol === "https:" ||
+          protocol === "mailto:" ||
+          protocol === "tel:"
+        ) {
+          return absolute;
+        }
+      } catch (ex) {
+        // Invalid links are unwrapped below while preserving their contents.
+      }
+      return null;
+    }
+
     var links = this._getAllNodesWithTag(articleContent, ["a"]);
     this._forEachNode(links, function (link) {
       var href = link.getAttribute("href");
       if (href) {
-        // Remove links with javascript: URIs, since
-        // they won't work after scripts have been removed from the page.
-        if (href.indexOf("javascript:") === 0) {
+        // Keep ordinary navigation schemes and unwrap active-content links.
+        var safeHref = toSafeAbsoluteLink(href);
+        if (!safeHref) {
           // if the link only contains simple text content, it can be converted to a text node
           if (
             link.childNodes.length === 1 &&
@@ -495,7 +513,7 @@ Readability.prototype = {
             link.parentNode.replaceChild(container, link);
           }
         } else {
-          link.setAttribute("href", toAbsoluteURI(href));
+          link.setAttribute("href", safeHref);
         }
       }
     });

@@ -247,11 +247,11 @@
     return attribute ? attribute.replace(/(\n+\s*)+/g, '\n') : '';
   }
   function escapeLinkDestination(destination) {
-    var escaped = destination.replace(/([<>()])/g, '\\$1');
+    var escaped = destination.replace(/([\\<>()])/g, '\\$1');
     return escaped.indexOf(' ') >= 0 ? '<' + escaped + '>' : escaped;
   }
   function escapeLinkTitle(title) {
-    return title.replace(/"/g, '\\"');
+    return title.replace(/([\\"])/g, '\\$1');
   }
 
   /**

@@ -284,9 +284,9 @@ async function startFakeEmbeddingServer(
           res.statusCode = 200
           res.setHeader("Content-Type", "application/json")
           res.end(JSON.stringify({ data: [{ embedding: vec }] }))
-        } catch (err) {
+        } catch {
           res.statusCode = 500
-          res.end(String(err))
+          res.end("invalid embedding request")
         }
       })
     })

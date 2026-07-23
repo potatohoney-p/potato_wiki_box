@@ -167,9 +167,9 @@ function replaceWikilinks(text: string): string {
     // markdown link parser. encodeURIComponent is overkill for a
     // fragment but it's the safe default.
     const href = `#${encodeURIComponent(target)}`
-    // Escape any closing brackets in the label that would otherwise
-    // terminate the markdown link text.
-    const escapedLabel = label.replace(/\[/g, "\\[").replace(/\]/g, "\\]")
+    // Escape backslashes before brackets so input cannot consume an escape
+    // sequence that protects the generated Markdown label.
+    const escapedLabel = label.replace(/[\\[\]]/g, "\\$&")
     return `[${escapedLabel}](${href})`
   })
 }

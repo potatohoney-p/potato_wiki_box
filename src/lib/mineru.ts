@@ -196,44 +196,235 @@ function isExternalOrDataUrl(url: string): boolean {
 }
 
 function decodeHtmlEntities(text: string): string {
-  const safeCodePoint = (raw: string, radix: 10 | 16): string => {
-    const n = Number.parseInt(raw, radix)
-    if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return radix === 16 ? `&#x${raw};` : `&#${raw};`
-    try {
-      return String.fromCodePoint(n)
-    } catch {
-      return radix === 16 ? `&#x${raw};` : `&#${raw};`
-    }
+  const namedEntities: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    nbsp: " ",
+    quot: '"',
   }
 
-  return text
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_m, code: string) => safeCodePoint(code, 10))
-    .replace(/&#x([0-9a-f]+);/gi, (_m, code: string) => safeCodePoint(code, 16))
+  return text.replace(
+    /&(?:amp|apos|gt|lt|nbsp|quot|#(?:\d+|x[0-9a-f]+));/gi,
+    (entity) => {
+      const named = namedEntities[entity.slice(1, -1).toLowerCase()]
+      if (named !== undefined) return named
+
+      const numeric = /^&#(x?)([0-9a-f]+);$/i.exec(entity)
+      if (!numeric) return entity
+      const radix = numeric[1] ? 16 : 10
+      const codePoint = Number.parseInt(numeric[2], radix)
+      if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+        return entity
+      }
+      try {
+        return String.fromCodePoint(codePoint)
+      } catch {
+        return entity
+      }
+    },
+  )
 }
 
-function htmlImgTagsToMarkdown(html: string): string {
-  return html.replace(/<img\b[^>]*\bsrc=(["'])([^"']+)\1[^>]*>/gi, (full, _quote: string, src: string) => {
-    const alt = full.match(/\balt=(["'])([^"']*)\1/i)?.[2] ?? ""
-    return `![${alt}](${src})`
+function isAsciiLetter(char: string | undefined): boolean {
+  if (!char) return false
+  const code = char.charCodeAt(0)
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+}
+
+function isHtmlNameChar(char: string | undefined): boolean {
+  if (!char) return false
+  const code = char.charCodeAt(0)
+  return isAsciiLetter(char)
+    || (code >= 48 && code <= 57)
+    || char === "-"
+    || char === "_"
+    || char === ":"
+}
+
+function findHtmlTagEnd(html: string, start: number): number {
+  let quote: '"' | "'" | null = null
+  for (let index = start + 1; index < html.length; index += 1) {
+    const char = html[index]
+    if (quote) {
+      if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+    } else if (char === ">") {
+      return index
+    }
+  }
+  return -1
+}
+
+interface ParsedHtmlTag {
+  closing: boolean
+  end: number
+  name: string
+  raw: string
+}
+
+function parseHtmlTagAt(html: string, start: number): ParsedHtmlTag | null {
+  if (html[start] !== "<") return null
+
+  const end = findHtmlTagEnd(html, start)
+  if (end < 0) return null
+
+  let cursor = start + 1
+  let closing = false
+  if (html[cursor] === "/") {
+    closing = true
+    cursor += 1
+  }
+
+  if (html[cursor] === "!" || html[cursor] === "?") {
+    return { closing, end, name: "", raw: html.slice(start, end + 1) }
+  }
+  if (!isAsciiLetter(html[cursor])) return null
+
+  const nameStart = cursor
+  while (cursor < end && isHtmlNameChar(html[cursor])) cursor += 1
+  return {
+    closing,
+    end,
+    name: html.slice(nameStart, cursor).toLowerCase(),
+    raw: html.slice(start, end + 1),
+  }
+}
+
+function parseHtmlAttributes(rawTag: string): Map<string, string> {
+  const attributes = new Map<string, string>()
+  let cursor = 1
+
+  if (rawTag[cursor] === "/") cursor += 1
+  while (cursor < rawTag.length && isHtmlNameChar(rawTag[cursor])) cursor += 1
+
+  while (cursor < rawTag.length - 1) {
+    while (cursor < rawTag.length && (/\s/.test(rawTag[cursor]) || rawTag[cursor] === "/")) {
+      cursor += 1
+    }
+    if (cursor >= rawTag.length - 1) break
+
+    const nameStart = cursor
+    while (cursor < rawTag.length && isHtmlNameChar(rawTag[cursor])) cursor += 1
+    if (cursor === nameStart) {
+      cursor += 1
+      continue
+    }
+    const name = rawTag.slice(nameStart, cursor).toLowerCase()
+
+    while (cursor < rawTag.length && /\s/.test(rawTag[cursor])) cursor += 1
+    let value = ""
+    if (rawTag[cursor] === "=") {
+      cursor += 1
+      while (cursor < rawTag.length && /\s/.test(rawTag[cursor])) cursor += 1
+      const quote = rawTag[cursor]
+      if (quote === '"' || quote === "'") {
+        cursor += 1
+        const valueStart = cursor
+        while (cursor < rawTag.length && rawTag[cursor] !== quote) cursor += 1
+        value = rawTag.slice(valueStart, cursor)
+        if (rawTag[cursor] === quote) cursor += 1
+      } else {
+        const valueStart = cursor
+        while (
+          cursor < rawTag.length
+          && !/\s/.test(rawTag[cursor])
+          && rawTag[cursor] !== ">"
+        ) {
+          cursor += 1
+        }
+        value = rawTag.slice(valueStart, cursor)
+      }
+    }
+    if (!attributes.has(name)) attributes.set(name, value)
+  }
+
+  return attributes
+}
+
+function escapeMarkdownTableText(text: string): string {
+  return decodeHtmlEntities(text).replace(/[\\[\]|<>]/g, (char) => {
+    if (char === "<") return "&lt;"
+    if (char === ">") return "&gt;"
+    return `\\${char}`
   })
 }
 
+function isSafeMarkdownImageSource(source: string): boolean {
+  try {
+    const url = new URL(source, "https://potato-box.invalid/")
+    const protocol = url.protocol.toLowerCase()
+    if (protocol === "http:" || protocol === "https:") return true
+    return protocol === "data:"
+      && /^data:image\/(?:bmp|gif|jpe?g|png|tiff?|webp);base64,/i.test(source)
+  } catch {
+    return false
+  }
+}
+
+function imageTagToMarkdown(rawTag: string): string {
+  const attributes = parseHtmlAttributes(rawTag)
+  const rawSrc = attributes.get("src")
+  if (!rawSrc) return ""
+
+  const decodedSrc = decodeHtmlEntities(rawSrc).trim()
+  if (!decodedSrc || !isSafeMarkdownImageSource(decodedSrc)) return ""
+
+  const src = decodedSrc
+    .replace(/[\u0000-\u0020"'()<>\\\u007f]/g, (char) =>
+      `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`,
+    )
+
+  const alt = decodeHtmlEntities(attributes.get("alt") ?? "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[\\[\]|<>]/g, (char) => {
+      if (char === "<") return "&lt;"
+      if (char === ">") return "&gt;"
+      return `\\${char}`
+    })
+  return `![${alt}](${src})`
+}
+
 function htmlCellToMarkdown(cell: string): string {
-  return decodeHtmlEntities(
-    htmlImgTagsToMarkdown(cell)
-      .replace(/<br\s*\/?>/gi, "<br>")
-      .replace(/<\/p\s*>/gi, "<br>")
-      .replace(/<[^>]+>/g, "")
-      .replace(/\s*<br>\s*/gi, "<br>")
-      .replace(/\s+/g, " ")
-      .trim(),
-  ).replace(/\|/g, "\\|")
+  let markdown = ""
+  let cursor = 0
+
+  while (cursor < cell.length) {
+    const tagStart = cell.indexOf("<", cursor)
+    if (tagStart < 0) {
+      markdown += escapeMarkdownTableText(cell.slice(cursor))
+      break
+    }
+
+    markdown += escapeMarkdownTableText(cell.slice(cursor, tagStart))
+
+    if (cell.startsWith("<!--", tagStart)) {
+      const commentEnd = cell.indexOf("-->", tagStart + 4)
+      if (commentEnd < 0) break
+      cursor = commentEnd + 3
+      continue
+    }
+
+    const tag = parseHtmlTagAt(cell, tagStart)
+    if (!tag) {
+      markdown += "&lt;"
+      cursor = tagStart + 1
+      continue
+    }
+
+    if (!tag.closing && tag.name === "img") {
+      markdown += imageTagToMarkdown(tag.raw)
+    } else if (tag.name === "br" || (tag.closing && tag.name === "p")) {
+      markdown += " "
+    }
+    cursor = tag.end + 1
+  }
+
+  return markdown.replace(/\s+/g, " ").trim()
 }
 
 function convertHtmlTablesInSegment(segment: string): string {

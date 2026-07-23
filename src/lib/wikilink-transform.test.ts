@@ -69,6 +69,12 @@ describe("transformWikilinks", () => {
     )
   })
 
+  it("escapes label backslashes before Markdown brackets", () => {
+    expect(transformWikilinks(String.raw`[[foo|folder\name [draft]]`)).toBe(
+      String.raw`[folder\\name \[draft](#foo)`,
+    )
+  })
+
   it("does not touch wikilinks inside fenced code blocks", () => {
     const input = "before [[a]]\n```md\ncode [[b]] block\n```\nafter [[c]]"
     expect(transformWikilinks(input)).toBe(
