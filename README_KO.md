@@ -71,7 +71,7 @@ potato box는 문서와 웹 자료를 가져와 구조화된 Markdown 페이지�
   </tr>
 </table>
 
-모든 화면은 합성 QA 프로젝트로 패키징된 데스크톱 앱에서 직접 캡처했습니다. 출처와 재사용 기준은 [자산 설명](assets/readme/README.md)에 기록되어 있습니다.
+모든 화면은 영문 전용 합성 Atlas Research 프로젝트를 사용해 네이티브 데스크톱 앱에서 Playwright로 직접 검증하고 캡처했습니다. 출처와 재사용 기준은 [자산 설명](assets/readme/README.md)에 기록되어 있습니다.
 
 ## 지식이 쌓이는 방식
 

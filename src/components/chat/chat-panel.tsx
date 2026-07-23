@@ -37,18 +37,18 @@ function formatExternalSearchContext(results: WebSearchResult[]): string {
     .join("\n\n---\n\n")
 }
 
-function formatDate(timestamp: number): string {
+function formatDate(timestamp: number, locale: string): string {
   const d = new Date(timestamp)
   const now = new Date()
   const isToday = d.toDateString() === now.toDateString()
   if (isToday) {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    return d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
   }
-  return d.toLocaleDateString([], { month: "short", day: "numeric" })
+  return d.toLocaleDateString(locale, { month: "short", day: "numeric" })
 }
 
 function ConversationSidebar() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const conversations = useChatStore((s) => s.conversations)
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const messages = useChatStore((s) => s.messages)
@@ -125,7 +125,7 @@ function ConversationSidebar() {
                   )}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                  <span>{formatDate(conv.updatedAt)}</span>
+                  <span>{formatDate(conv.updatedAt, i18n.resolvedLanguage ?? i18n.language)}</span>
                   {msgCount > 0 && (
                     <>
                       <span>·</span>
