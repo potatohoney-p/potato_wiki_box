@@ -8,8 +8,8 @@ Upstream source:
 https://github.com/nashsu/llm_wiki
 
 The combined work is distributed under the GNU General Public License,
-version 3 only. The complete license,
-including the preserved upstream copyright notice, is in LICENSE.
+version 3 only. The complete license text is in LICENSE. Project and
+upstream copyright notices are preserved in this NOTICE file.
 
 The general pattern of using an LLM to incrementally maintain a personal
 wiki was also described by Andrej Karpathy:
