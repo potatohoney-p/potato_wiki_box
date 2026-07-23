@@ -4,7 +4,7 @@
  * functions; everything below is about read/write/spawn-llm so
  * the algorithm core stays testable without mocks of all that.
  */
-import { listDirectory, readFile, writeFile, deleteFile } from "@/commands/fs"
+import { listDirectory, readFile, writeFileAtomic, deleteFile } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import {
   candidatePairs,
@@ -359,7 +359,7 @@ function isEmbeddingCoverageError(err: unknown): boolean {
  *   1. Load each group page's full content + every other wiki page
  *   2. Run mergeDuplicateGroup (LLM body merge + frontmatter
  *      union + cross-reference rewrites)
- *   3. Snapshot every touched file to .llm-wiki/page-history/
+ *   3. Snapshot every touched file to .potato-box/page-history/
  *      dedup-<timestamp>/
  *   4. Write canonical content
  *   5. Apply cross-reference rewrites
@@ -417,47 +417,107 @@ export async function executeMerge(
     llm,
     { signal: options.signal },
   )
+  throwIfMergeAborted(options.signal)
 
   // 2. Snapshot backup before any writes. If a write fails partway
   //    through, the user has the pre-merge state intact in
-  //    .llm-wiki/page-history/.
+  //    .potato-box/page-history/.
   const stamp = new Date().toISOString().replace(/[:.]/g, "-")
-  const backupDir = `${pp}/.llm-wiki/page-history/dedup-${stamp}`
+  const backupDir = `${pp}/.potato-box/page-history/dedup-${stamp}`
   for (const b of result.backup) {
+    throwIfMergeAborted(options.signal)
     const sanitized = b.path.replace(/[/\\]/g, "_")
-    await writeFile(`${backupDir}/${sanitized}`, b.content)
+    await writeFileAtomic(`${backupDir}/${sanitized}`, b.content)
   }
 
-  // 3. Write canonical
-  await writeFile(`${pp}/${result.canonicalPath}`, result.canonicalContent)
-
-  // 4. Apply rewrites
-  for (const r of result.rewrites) {
-    await writeFile(`${pp}/${r.path}`, r.newContent)
+  const currentContent = new Map(allPages.map((page) => [page.path, page.content]))
+  const mutations: Array<{ path: string; previousContent: string | null }> = []
+  const writePage = async (relativePath: string, content: string) => {
+    throwIfMergeAborted(options.signal)
+    mutations.push({
+      path: relativePath,
+      previousContent: currentContent.get(relativePath) ?? null,
+    })
+    await writeFileAtomic(`${pp}/${relativePath}`, content)
+    currentContent.set(relativePath, content)
   }
-
-  // 5. Delete merged-away pages
-  for (const dead of result.pagesToDelete) {
-    try {
-      await deleteFile(`${pp}/${dead}`)
-    } catch (err) {
-      // Surface as a warning — backup is still safe.
-      console.warn(`[dedup] failed to delete ${dead}: ${err}`)
+  const deletePage = async (relativePath: string) => {
+    throwIfMergeAborted(options.signal)
+    const previousContent = currentContent.get(relativePath)
+    if (previousContent === undefined) {
+      throw new Error(`Cannot transactionally delete missing page ${relativePath}`)
     }
+    mutations.push({ path: relativePath, previousContent })
+    await deleteFile(`${pp}/${relativePath}`)
+    currentContent.delete(relativePath)
   }
 
-  // 6. Rewrite index.md to drop merged-away entries.
-  const indexPath = `${pp}/wiki/index.md`
-  const indexEntry = allPages.find((p) => p.path === "wiki/index.md")
-  if (indexEntry) {
-    const removed = new Set(
-      group.slugs.filter((s) => s !== canonicalSlug),
-    )
-    const rewritten = rewriteIndexMd(indexEntry.content, removed)
-    if (rewritten !== indexEntry.content) {
-      await writeFile(indexPath, rewritten)
+  try {
+    // 3. Write canonical.
+    await writePage(result.canonicalPath, result.canonicalContent)
+
+    // 4. Apply rewrites.
+    for (const rewrite of result.rewrites) {
+      await writePage(rewrite.path, rewrite.newContent)
     }
+
+    // 5. Delete merged-away pages.
+    for (const dead of result.pagesToDelete) {
+      await deletePage(dead)
+    }
+
+    // 6. Rewrite index.md to drop merged-away entries.
+    const indexContent = currentContent.get("wiki/index.md")
+    if (indexContent !== undefined) {
+      const removed = new Set(
+        group.slugs.filter((s) => s !== canonicalSlug),
+      )
+      const rewritten = rewriteIndexMd(indexContent, removed)
+      if (rewritten !== indexContent) {
+        await writePage("wiki/index.md", rewritten)
+      }
+    }
+
+    throwIfMergeAborted(options.signal)
+  } catch (error) {
+    await rollbackMergeMutations(pp, mutations, error)
+    throw error
   }
 
   return result
+}
+
+function throwIfMergeAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const error = new Error("Duplicate merge cancelled")
+  error.name = "AbortError"
+  throw error
+}
+
+async function rollbackMergeMutations(
+  projectPath: string,
+  mutations: readonly { path: string; previousContent: string | null }[],
+  originalError: unknown,
+): Promise<void> {
+  const failures: string[] = []
+  for (const mutation of [...mutations].reverse()) {
+    try {
+      const fullPath = `${projectPath}/${mutation.path}`
+      if (mutation.previousContent === null) {
+        await deleteFile(fullPath)
+      } else {
+        await writeFileAtomic(fullPath, mutation.previousContent)
+      }
+    } catch (error) {
+      failures.push(
+        `${mutation.path}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  if (failures.length > 0) {
+    const cause = originalError instanceof Error ? originalError.message : String(originalError)
+    throw new Error(
+      `Duplicate merge failed (${cause}) and rollback was incomplete (${failures.join("; ")})`,
+    )
+  }
 }

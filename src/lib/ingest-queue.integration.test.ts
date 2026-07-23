@@ -1,7 +1,7 @@
 /**
  * Tier 4 — real-FS integration tests for ingest queue persistence.
  *
- * Exercises the actual `.llm-wiki/ingest-queue.json` write/read round-trip
+ * Exercises the actual `.potato-box/ingest-queue.json` write/read round-trip
  * against Node fs, catching JSON escape / Unicode / directory-creation bugs
  * that memory mocks would miss.
  */
@@ -80,7 +80,7 @@ afterEach(async () => {
 })
 
 async function readQueueFile(): Promise<string> {
-  return readFileRaw(`${tmp.path}/.llm-wiki/ingest-queue.json`)
+  return readFileRaw(`${tmp.path}/.potato-box/ingest-queue.json`)
 }
 
 async function waitForQueueSnapshot<T>(predicate: (parsed: T) => boolean): Promise<T> {
@@ -100,7 +100,7 @@ async function waitForQueueSnapshot<T>(predicate: (parsed: T) => boolean): Promi
 }
 
 describe("ingest-queue persistence — write", () => {
-  it("writes .llm-wiki/ingest-queue.json after enqueue", async () => {
+  it("writes .potato-box/ingest-queue.json after enqueue", async () => {
     await enqueueIngest(TEST_ID_A, "raw/sources/a.md")
     const parsed = await waitForQueueSnapshot<Array<{ sourcePath: string }>>((items) => items.length === 1)
     expect(parsed[0].sourcePath).toBe("raw/sources/a.md")
@@ -130,10 +130,10 @@ describe("ingest-queue persistence — write", () => {
     expect(parsed.map((p) => p.folderContext)).toContain("AI研究 > 论文")
   })
 
-  it("auto-creates .llm-wiki/ directory when it doesn't exist", async () => {
-    expect(await fileExists(`${tmp.path}/.llm-wiki`)).toBe(false)
+  it("auto-creates .potato-box/ directory when it doesn't exist", async () => {
+    expect(await fileExists(`${tmp.path}/.potato-box`)).toBe(false)
     await enqueueIngest(TEST_ID_A, "x.md")
-    await waitFor(() => fileExists(`${tmp.path}/.llm-wiki/ingest-queue.json`))
+    await waitFor(() => fileExists(`${tmp.path}/.potato-box/ingest-queue.json`))
   })
 
   it("each enqueue updates the persisted JSON in-place", async () => {
@@ -187,7 +187,7 @@ describe("ingest-queue persistence — restore round-trip", () => {
       },
     ]
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/ingest-queue.json`,
+      `${tmp.path}/.potato-box/ingest-queue.json`,
       JSON.stringify(saved, null, 2),
     )
 
@@ -214,7 +214,7 @@ describe("ingest-queue persistence — restore round-trip", () => {
       },
     ]
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/ingest-queue.json`,
+      `${tmp.path}/.potato-box/ingest-queue.json`,
       JSON.stringify(saved, null, 2),
     )
 
@@ -230,13 +230,18 @@ describe("ingest-queue persistence — restore round-trip", () => {
     expect(getQueue()).toEqual([])
   })
 
-  it("returns empty queue when the file is corrupted JSON", async () => {
+  it("preserves and rejects a corrupted queue instead of overwriting it", async () => {
+    const corrupt = "{not valid json at all"
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/ingest-queue.json`,
-      "{not valid json at all",
+      `${tmp.path}/.potato-box/ingest-queue.json`,
+      corrupt,
     )
-    await restoreQueue(TEST_ID_A, tmp.path)
-    expect(getQueue()).toEqual([])
+
+    await expect(restoreQueue(TEST_ID_A, tmp.path)).rejects.toThrow("invalid JSON")
+
+    expect(await readFileRaw(`${tmp.path}/.potato-box/ingest-queue.json`)).toBe(corrupt)
+    const recovery = await realFs.listDirectory(`${tmp.path}/.potato-box/recovery`)
+    expect(recovery.some((entry) => entry.name.startsWith("ingest-queue.json.corrupt-"))).toBe(true)
   })
 
   it("round-trips Unicode + folder context correctly", async () => {
@@ -252,7 +257,7 @@ describe("ingest-queue persistence — restore round-trip", () => {
 
     clearQueueState()
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/ingest-queue.json`,
+      `${tmp.path}/.potato-box/ingest-queue.json`,
       JSON.stringify(onDisk, null, 2),
     )
     await restoreQueue(TEST_ID_A, tmp.path)

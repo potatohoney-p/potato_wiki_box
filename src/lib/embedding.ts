@@ -25,6 +25,7 @@ import { invoke } from "@tauri-apps/api/core"
 import type { EmbeddingConfig } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
+import { vectorPageIdFromPath } from "@/lib/wiki-page-id"
 import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
 import { chunkMarkdown, type Chunk } from "@/lib/text-chunker"
 import { isLocalOrPrivateHttpEndpoint, localLlmOriginHeader } from "@/lib/llm-providers"
@@ -417,6 +418,16 @@ async function vectorDeletePage(projectPath: string, pageId: string): Promise<vo
   })
 }
 
+function legacyVectorPageId(pageId: string): string | null {
+  try {
+    const decoded = decodeURIComponent(pageId)
+    const basename = decoded.split("/").filter(Boolean).pop() ?? ""
+    return basename && basename !== pageId ? basename : null
+  } catch {
+    return null
+  }
+}
+
 async function vectorCountChunks(projectPath: string): Promise<number> {
   return await invoke("vector_count_chunks", {
     projectPath: normalizePath(projectPath),
@@ -600,6 +611,14 @@ export async function embedPage(
     return false
   }
 
+  const legacyPageId = legacyVectorPageId(pageId)
+  if (legacyPageId) {
+    try {
+      await vectorDeletePage(projectPath, legacyPageId)
+    } catch {
+      // Best-effort cleanup for indexes created before path-qualified page IDs.
+    }
+  }
   await vectorUpsertChunks(projectPath, pageId, prepared.page.rows)
   if (!options?.deferOptimization) {
     await noteIncrementalVectorWrite(projectPath)
@@ -644,7 +663,7 @@ export async function embedAllPages(
       if (node.is_dir && node.children) {
         walk(node.children)
       } else if (!node.is_dir && node.name.endsWith(".md")) {
-        const id = node.name.replace(/\.md$/, "")
+        const id = vectorPageIdFromPath(node.path, `${pp}/wiki`)
         if (!["index", "log", "overview", "purpose", "schema"].includes(id)) {
           mdFiles.push({ id, path: node.path })
         }
@@ -852,6 +871,14 @@ export async function removePageEmbedding(
     await vectorDeletePage(projectPath, pageId)
   } catch {
     // non-critical
+  }
+  const legacyPageId = legacyVectorPageId(pageId)
+  if (legacyPageId) {
+    try {
+      await vectorDeletePage(projectPath, legacyPageId)
+    } catch {
+      // non-critical
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 export const DEFAULT_API_BASE_URL = "http://127.0.0.1:19828"
 
-export interface LlmWikiApiClientOptions {
+export interface PotatoBoxApiClientOptions {
   baseUrl?: string
   token?: string
   fetchImpl?: typeof fetch
@@ -9,7 +9,6 @@ export interface LlmWikiApiClientOptions {
 export interface ApiProject {
   id: string
   name: string
-  path: string
   current: boolean
 }
 
@@ -92,7 +91,6 @@ export interface ApiHealth {
   mcpEnabled?: boolean
   authRequired?: boolean
   authConfigured?: boolean
-  allowUnauthenticated?: boolean
   tokenSource?: string
   [key: string]: unknown
 }
@@ -117,14 +115,16 @@ function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
-export class LlmWikiApiClient {
+export class PotatoBoxApiClient {
   private readonly baseUrl: string
   private readonly token?: string
   private readonly fetchImpl: typeof fetch
 
-  constructor(options: LlmWikiApiClientOptions = {}) {
-    this.baseUrl = normalizeBaseUrl(options.baseUrl ?? process.env.LLM_WIKI_API_BASE_URL)
-    this.token = options.token ?? process.env.LLM_WIKI_API_TOKEN
+  constructor(options: PotatoBoxApiClientOptions = {}) {
+    this.baseUrl = normalizeBaseUrl(
+      options.baseUrl ?? process.env.POTATO_BOX_API_BASE_URL,
+    )
+    this.token = options.token ?? process.env.POTATO_BOX_API_TOKEN
     this.fetchImpl = options.fetchImpl ?? fetch
   }
 
@@ -228,20 +228,20 @@ export class LlmWikiApiClient {
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
       })
     } catch (err) {
-      throw new Error(`LLM Wiki API request failed. Is the desktop app running? ${err instanceof Error ? err.message : String(err)}`)
+      throw new Error(`potato box API request failed. Is the desktop app running? ${err instanceof Error ? err.message : String(err)}`)
     }
 
     const text = await response.text()
     let json: Record<string, unknown>
     try {
-      json = text ? requireObject(JSON.parse(text), "LLM Wiki API response") : {}
+      json = text ? requireObject(JSON.parse(text), "potato box API response") : {}
     } catch (err) {
-      throw new Error(`LLM Wiki API returned non-JSON response (${response.status}): ${text.slice(0, 300)}${err instanceof Error ? ` (${err.message})` : ""}`)
+      throw new Error(`potato box API returned non-JSON response (${response.status}): ${text.slice(0, 300)}${err instanceof Error ? ` (${err.message})` : ""}`)
     }
 
     if (!response.ok || json.ok === false) {
       const message = typeof json.error === "string" ? json.error : response.statusText
-      throw new Error(`LLM Wiki API ${response.status}: ${message}`)
+      throw new Error(`potato box API ${response.status}: ${message}`)
     }
     return json
   }
@@ -252,7 +252,6 @@ function parseProject(value: unknown): ApiProject {
   return {
     id: String(obj.id ?? ""),
     name: String(obj.name ?? ""),
-    path: String(obj.path ?? ""),
     current: obj.current === true,
   }
 }

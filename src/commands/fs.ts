@@ -19,6 +19,11 @@ export async function readFile(
   })
 }
 
+export async function readTextFileLimited(path: string, maxBytes: number): Promise<string> {
+  assertAbsoluteFsPath("readTextFileLimited", path)
+  return invoke<string>("read_text_file_limited", { path, maxBytes })
+}
+
 export async function writeFile(path: string, contents: string): Promise<void> {
   assertAbsoluteFsPath("writeFile", path)
   return invoke<void>("write_file", { path, contents })
@@ -58,6 +63,15 @@ export async function preprocessFile(path: string): Promise<string> {
 
 export async function deleteFile(path: string): Promise<void> {
   return invoke("delete_file", { path })
+}
+
+export async function deleteManagedReviewFile(
+  projectPath: string,
+  path: string,
+): Promise<void> {
+  assertAbsoluteFsPath("deleteManagedReviewFile project", projectPath)
+  assertAbsoluteFsPath("deleteManagedReviewFile target", path)
+  return invoke("delete_managed_review_file", { projectPath, path })
 }
 
 export async function findRelatedWikiPages(
@@ -133,6 +147,63 @@ export async function openProjectFolder(path: string): Promise<void> {
 
 export async function clipServerStatus(): Promise<string> {
   return invoke<string>("clip_server_status")
+}
+
+export interface ClipProjectRegistration {
+  id: string
+  name: string
+  path: string
+}
+
+export interface PendingClip {
+  id: string
+  projectId: string
+  filePath: string
+  createdAt: number
+}
+
+export async function registerClipProjects(
+  currentProjectId: string,
+  projects: ClipProjectRegistration[],
+): Promise<void> {
+  return invoke<void>("clip_register_projects", { currentProjectId, projects })
+}
+
+export async function getPendingClips(projectId: string): Promise<PendingClip[]> {
+  return invoke<PendingClip[]>("clip_pending_clips", { projectId })
+}
+
+export async function acknowledgeClips(projectId: string, clipIds: string[]): Promise<void> {
+  return invoke<void>("clip_acknowledge_clips", { projectId, clipIds })
+}
+
+export interface BackupReport {
+  path: string
+  files: number
+  uncompressedBytes: number
+  archiveBytes: number
+  sha256: string
+  createdAt: string
+}
+
+export interface RestoreReport {
+  projectPath: string
+  files: number
+  uncompressedBytes: number
+}
+
+export async function createProjectBackup(
+  projectPath: string,
+  destination: string,
+): Promise<BackupReport> {
+  return invoke<BackupReport>("create_project_backup", { projectPath, destination })
+}
+
+export async function restoreProjectBackup(
+  archivePath: string,
+  destinationParent: string,
+): Promise<RestoreReport> {
+  return invoke<RestoreReport>("restore_project_backup", { archivePath, destinationParent })
 }
 
 export async function apiServerStatus(): Promise<string> {

@@ -21,8 +21,9 @@ src-tauri/gen/
 .env.local
 .env.*.local
 
-# Internal docs (not shipped)
-docs/
+# Internal working notes (public documentation under docs/ is tracked)
+docs/internal/
+.gstack/
 AGENTS.md
 
 # Benchmark and test data (local only)

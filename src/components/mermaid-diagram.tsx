@@ -7,6 +7,12 @@ interface MermaidDiagramProps {
 
 const svgCache = new Map<string, string>()
 
+export const MERMAID_CONFIG = Object.freeze({
+  startOnLoad: false,
+  theme: "default" as const,
+  securityLevel: "strict" as const,
+})
+
 export function MermaidDiagram({ code }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
@@ -54,11 +60,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
     async function render() {
       try {
         const mermaid = (await import("mermaid")).default
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: "default",
-          securityLevel: "strict",
-        })
+        mermaid.initialize(MERMAID_CONFIG)
 
         const id = `mermaid-${Math.random().toString(36).slice(2, 10)}`
         const { svg: rendered } = await mermaid.render(id, code)

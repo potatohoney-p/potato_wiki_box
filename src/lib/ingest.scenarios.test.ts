@@ -17,7 +17,19 @@ import { materializeScenario, copyDir } from "@/test-helpers/scenarios/materiali
 import { ingestScenarios } from "@/test-helpers/scenarios/ingest-scenarios"
 import type { IngestScenario } from "@/test-helpers/scenarios/types"
 
-vi.mock("@/commands/fs", () => realFs)
+const fsBehavior = vi.hoisted(() => ({ failAtomicPathSuffix: "" }))
+vi.mock("@/commands/fs", () => ({
+  ...realFs,
+  writeFileAtomic: async (filePath: string, contents: string) => {
+    if (
+      fsBehavior.failAtomicPathSuffix &&
+      filePath.replace(/\\/g, "/").endsWith(fsBehavior.failAtomicPathSuffix)
+    ) {
+      throw new Error("disk full")
+    }
+    return realFs.writeFileAtomic(filePath, contents)
+  },
+}))
 
 // Sequenced streamChat: stage-1 returns analysisResponse, stage-2 returns
 // generationResponse. Any further calls return empty (shouldn't happen in a
@@ -53,6 +65,7 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  fsBehavior.failAtomicPathSuffix = ""
   pendingResponses = []
   useReviewStore.setState({ items: [] })
   useActivityStore.setState({ items: [] })
@@ -275,6 +288,52 @@ describe("ingest scenarios (fixture-driven)", () => {
     expect(await fileExists(`${projectPath}/wiki/concepts/wrong-place.md`)).toBe(false)
   })
 
+  it("rolls back earlier page replacements when a later atomic write fails", async () => {
+    ctx = { tmp: await createTempProject("ingest-atomic-rollback") }
+    const projectPath = ctx.tmp.path
+    const originalIndex = "# Index\n\n- [[existing]]\n"
+    await writeFileRaw(`${projectPath}/schema.md`, "# Schema\n")
+    await writeFileRaw(`${projectPath}/purpose.md`, "# Purpose\n")
+    await writeFileRaw(`${projectPath}/wiki/index.md`, originalIndex)
+    await writeFileRaw(`${projectPath}/wiki/overview.md`, "# Overview\n")
+    const sourcePath = `${projectPath}/raw/sources/failure.md`
+    await writeFileRaw(sourcePath, "source content")
+
+    useWikiStore.setState({
+      project: {
+        id: "project-a",
+        name: "t",
+        path: projectPath,
+        fileTree: [],
+      } as never,
+    })
+    useWikiStore.getState().setLlmConfig({
+      provider: "openai",
+      apiKey: "test-key",
+      model: "gpt-4",
+      maxContextSize: 128000,
+    } as never)
+    pendingResponses = [
+      "analysis",
+      [
+        "---FILE: wiki/index.md---",
+        "# Index\n\n- [[replacement]]",
+        "---END FILE---",
+        "---FILE: wiki/concepts/fail.md---",
+        "---\ntype: concept\ntitle: Fail\nsources: [failure.md]\ntags: []\nrelated: []\n---\n\n# Fail\n",
+        "---END FILE---",
+      ].join("\n"),
+    ]
+    fsBehavior.failAtomicPathSuffix = "/wiki/concepts/fail.md"
+
+    await expect(
+      autoIngest(projectPath, sourcePath, useWikiStore.getState().llmConfig),
+    ).rejects.toThrow("Failed to write")
+
+    expect(await readFileRaw(`${projectPath}/wiki/index.md`)).toBe(originalIndex)
+    expect(await fileExists(`${projectPath}/wiki/concepts/fail.md`)).toBe(false)
+  })
+
   it("keeps source summaries distinct for same basenames in different source folders", async () => {
     ctx = { tmp: await createTempProject("ingest-duplicate-source-basenames") }
     const projectPath = ctx.tmp.path
@@ -321,6 +380,7 @@ describe("ingest scenarios (fixture-driven)", () => {
         "analysis for project A",
         "---END FILE---",
       ].join("\n"),
+      "",
       "analysis for project B",
       [
         "---FILE: wiki/sources/config.md---",
@@ -337,6 +397,7 @@ describe("ingest scenarios (fixture-driven)", () => {
         "analysis for project B",
         "---END FILE---",
       ].join("\n"),
+      "",
     ]
 
     const cfg = useWikiStore.getState().llmConfig

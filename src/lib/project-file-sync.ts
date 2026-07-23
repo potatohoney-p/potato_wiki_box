@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
-import { readFile, listDirectory } from "@/commands/fs"
+import { fileExists, readFile, listDirectory } from "@/commands/fs"
 import {
   rescanProjectFiles,
   startProjectFileWatcher,
@@ -28,6 +28,12 @@ let pendingRefreshPaths = new Set<string>()
 let pendingChangeTasks = new Map<string, FileChangeTask>()
 let activeSourceWatchConfig = normalizeSourceWatchConfig()
 let handledChangeTaskKeys = new Set<string>()
+const DELETION_GRACE_MS = 30_000
+const pendingDeletionBatches = new Map<string, {
+  project: WikiProject
+  paths: Set<string>
+  timer: ReturnType<typeof setTimeout>
+}>()
 
 export async function startProjectFileSync(
   project: WikiProject,
@@ -96,6 +102,8 @@ export async function stopProjectFileSync(): Promise<void> {
   pendingRefreshPaths.clear()
   pendingChangeTasks.clear()
   handledChangeTaskKeys.clear()
+  for (const batch of pendingDeletionBatches.values()) clearTimeout(batch.timer)
+  pendingDeletionBatches.clear()
   useFileSyncStore.getState().clear()
   try {
     await stopProjectFileWatcher()
@@ -183,14 +191,20 @@ async function processFileChangeBatch(
 
 async function refreshAfterFileChanges(project: WikiProject, relativePaths: string[]): Promise<void> {
   const pp = normalizePath(project.path)
-  const store = useWikiStore.getState()
+  const isStillActive = () => {
+    const activeProject = useWikiStore.getState().project
+    return activeProject?.id === project.id && normalizePath(activeProject.path) === pp
+  }
   try {
     const tree = await listDirectory(pp)
+    if (!isStillActive()) return
     useWikiStore.getState().setFileTree(tree)
   } catch (err) {
     console.warn("[file-sync] failed to refresh file tree:", err)
   }
 
+  if (!isStillActive()) return
+  const store = useWikiStore.getState()
   store.bumpDataVersion()
 
   const selected = store.selectedFile ? normalizePath(store.selectedFile) : null
@@ -201,8 +215,10 @@ async function refreshAfterFileChanges(project: WikiProject, relativePaths: stri
 
   try {
     const content = await readFile(selected)
+    if (!isStillActive()) return
     useWikiStore.getState().setFileContent(content)
   } catch {
+    if (!isStillActive()) return
     useWikiStore.getState().setSelectedFile(null)
     useWikiStore.getState().setFileContent("")
   }
@@ -226,6 +242,9 @@ async function enqueueRawSourceChanges(project: WikiProject, tasks: FileChangeTa
     await enqueueSourceIngest(project, paths, useWikiStore.getState().llmConfig)
   } catch (err) {
     console.error("[file-sync] failed to enqueue raw source ingest:", err)
+    useFileSyncStore.getState().setLastError(
+      err instanceof Error ? err.message : String(err),
+    )
   }
 }
 
@@ -236,10 +255,49 @@ function isIngestableRawSource(relativePath: string): boolean {
 }
 
 async function cleanupDeletedFiles(project: WikiProject, tasks: FileChangeTask[]): Promise<void> {
-  const deleted = tasks
-    .filter((task) => task.projectId === project.id && task.kind === "deleted")
-    .map((task) => normalizePath(task.path))
+  const relevant = tasks.filter((task) => task.projectId === project.id)
+  if (relevant.length === 0) return
 
+  const existing = pendingDeletionBatches.get(project.id)
+  const paths = existing?.paths ?? new Set<string>()
+  for (const task of relevant) {
+    const path = normalizePath(task.path)
+    if (task.kind === "deleted") paths.add(path)
+    else paths.delete(path)
+  }
+  if (existing) clearTimeout(existing.timer)
+  if (paths.size === 0) {
+    pendingDeletionBatches.delete(project.id)
+    return
+  }
+
+  const timer = setTimeout(() => {
+    pendingDeletionBatches.delete(project.id)
+    if (useWikiStore.getState().project?.id !== project.id) return
+    void cleanupConfirmedDeletedFiles(project, [...paths])
+  }, DELETION_GRACE_MS)
+  pendingDeletionBatches.set(project.id, { project, paths, timer })
+}
+
+async function cleanupConfirmedDeletedFiles(
+  project: WikiProject,
+  reportedDeleted: string[],
+): Promise<void> {
+
+  if (reportedDeleted.length === 0) return
+
+  // Atomic saves and cloud-sync clients often emit delete/create pairs. The
+  // watcher batch is delayed, so re-check the filesystem at the destructive
+  // boundary and cascade only paths that are still absent.
+  const pp = normalizePath(project.path)
+  const deleted: string[] = []
+  for (const relativePath of reportedDeleted) {
+    try {
+      if (!(await fileExists(`${pp}/${relativePath}`))) deleted.push(relativePath)
+    } catch (err) {
+      console.warn(`[file-sync] could not confirm deletion for ${relativePath}; skipping cascade`, err)
+    }
+  }
   if (deleted.length === 0) return
 
   const rawSources = deleted.filter(isRawSourcePathForCascade)

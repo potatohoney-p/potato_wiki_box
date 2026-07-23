@@ -1,6 +1,6 @@
-use std::fs;
-use std::io::Read as IoRead;
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::{Read as IoRead, Write as IoWrite};
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
@@ -38,6 +38,13 @@ fn is_absolute_path_cross_platform(path: &str) -> bool {
         return false;
     }
     if Path::new(path).is_absolute() {
+        return true;
+    }
+
+    // `Path::is_absolute` follows the host platform. A Unix absolute path
+    // still needs to be recognized when fixtures or imported settings are
+    // validated on Windows.
+    if path.starts_with('/') {
         return true;
     }
 
@@ -115,6 +122,48 @@ pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<Str
     })
     .await
     .map_err(|e| format!("read_file blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn read_text_file_limited(path: String, max_bytes: u64) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("read_text_file_limited", || {
+            require_absolute_path("read_text_file_limited", &path)?;
+            if max_bytes == 0 {
+                return Err("read_text_file_limited requires max_bytes > 0".to_string());
+            }
+            let metadata = fs::metadata(&path)
+                .map_err(|error| format!("Failed to inspect text file '{}': {error}", path))?;
+            if !metadata.is_file() {
+                return Err(format!("Text path is not a regular file: '{}'", path));
+            }
+            if metadata.len() > max_bytes {
+                return Err(format!(
+                    "Text file '{}' is too large for this operation ({} bytes; limit {} bytes)",
+                    path,
+                    metadata.len(),
+                    max_bytes
+                ));
+            }
+
+            let mut bytes = Vec::with_capacity(metadata.len() as usize);
+            fs::File::open(&path)
+                .map_err(|error| format!("Failed to open text file '{}': {error}", path))?
+                .take(max_bytes + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("Failed to read text file '{}': {error}", path))?;
+            if bytes.len() as u64 > max_bytes {
+                return Err(format!(
+                    "Text file '{}' grew beyond the {} byte limit while it was read",
+                    path, max_bytes
+                ));
+            }
+            String::from_utf8(bytes)
+                .map_err(|error| format!("Text file '{}' is not valid UTF-8: {error}", path))
+        })
+    })
+    .await
+    .map_err(|error| format!("read_text_file_limited blocking task join error: {error}"))?
 }
 
 /// Pre-process a file and cache the extracted text.
@@ -518,29 +567,27 @@ fn extract_docx_with_library(path: &str) -> Result<String, String> {
             docx_rs::DocumentChild::Table(table) => {
                 let mut rows: Vec<Vec<String>> = Vec::new();
                 for row in &table.rows {
-                    if let docx_rs::TableChild::TableRow(tr) = row {
-                        let mut cells: Vec<String> = Vec::new();
-                        for cell in &tr.cells {
-                            if let docx_rs::TableRowChild::TableCell(tc) = cell {
-                                let mut cell_text = String::new();
-                                for child in &tc.children {
-                                    if let docx_rs::TableCellContent::Paragraph(para) = child {
-                                        for pchild in &para.children {
-                                            if let docx_rs::ParagraphChild::Run(run) = pchild {
-                                                for rc in &run.children {
-                                                    if let docx_rs::RunChild::Text(t) = rc {
-                                                        cell_text.push_str(&t.text);
-                                                    }
-                                                }
+                    let docx_rs::TableChild::TableRow(tr) = row;
+                    let mut cells: Vec<String> = Vec::new();
+                    for cell in &tr.cells {
+                        let docx_rs::TableRowChild::TableCell(tc) = cell;
+                        let mut cell_text = String::new();
+                        for child in &tc.children {
+                            if let docx_rs::TableCellContent::Paragraph(para) = child {
+                                for pchild in &para.children {
+                                    if let docx_rs::ParagraphChild::Run(run) = pchild {
+                                        for rc in &run.children {
+                                            if let docx_rs::RunChild::Text(t) = rc {
+                                                cell_text.push_str(&t.text);
                                             }
                                         }
                                     }
                                 }
-                                cells.push(cell_text.trim().replace('|', "\\|"));
                             }
                         }
-                        rows.push(cells);
+                        cells.push(cell_text.trim().replace('|', "\\|"));
                     }
+                    rows.push(cells);
                 }
                 if !rows.is_empty() {
                     let max_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
@@ -603,7 +650,6 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
     let len = chars.len();
 
     // Track current paragraph state
-    let mut in_paragraph = false;
     let mut paragraph_text = String::new();
     let mut is_heading = false;
     let mut heading_level: u8 = 1;
@@ -619,7 +665,6 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
     while i < len {
         if chars[i] == '<' {
             // Read tag name
-            let tag_start = i;
             i += 1;
             let is_closing = i < len && chars[i] == '/';
             if is_closing {
@@ -645,7 +690,6 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
             match tag_name.as_str() {
                 // Paragraph start
                 "w:p" if !is_closing => {
-                    in_paragraph = true;
                     paragraph_text.clear();
                     is_heading = false;
                     in_list_item = false;
@@ -666,7 +710,6 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
                             result.push_str("\n\n");
                         }
                     }
-                    in_paragraph = false;
                     paragraph_text.clear();
                 }
                 // Heading style detection
@@ -750,7 +793,7 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
                         result.push_str(&table_row.join(" | "));
                         result.push_str(" |\n");
                         if is_first_table_row {
-                            result.push_str("|");
+                            result.push('|');
                             for _ in &table_row {
                                 result.push_str(" --- |");
                             }
@@ -1029,24 +1072,31 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
             let file_name = p
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| "llm-wiki-file".to_string());
-            let tmp_path = p.with_file_name(format!(
-                ".{file_name}.{}.tmp",
-                chrono::Utc::now()
-                    .timestamp_nanos_opt()
-                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis())
-            ));
+                .unwrap_or_else(|| "potato-box-file".to_string());
+            let tmp_path = p.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
 
             file_sync::mark_app_write_path(&tmp_path);
             file_sync::mark_app_write_path(p);
-            fs::write(&tmp_path, contents).map_err(|e| {
-                format!("Failed to write temp file '{}': {}", tmp_path.display(), e)
-            })?;
+            let mut tmp_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)
+                .map_err(|e| {
+                    format!("Failed to create temp file '{}': {}", tmp_path.display(), e)
+                })?;
+            tmp_file
+                .write_all(contents.as_bytes())
+                .and_then(|_| tmp_file.sync_all())
+                .map_err(|e| {
+                    let _ = fs::remove_file(&tmp_path);
+                    format!("Failed to flush temp file '{}': {}", tmp_path.display(), e)
+                })?;
+            drop(tmp_file);
 
-            fs::rename(&tmp_path, p).map_err(|e| {
+            replace_file_atomically(&tmp_path, p).map_err(|e| {
                 let _ = fs::remove_file(&tmp_path);
                 format!(
-                    "Failed to move temp file '{}' to '{}': {}",
+                    "Failed to replace '{}' with '{}': {}",
                     tmp_path.display(),
                     path,
                     e
@@ -1058,6 +1108,42 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
     })
     .await
     .map_err(|e| format!("write_file_atomic blocking task join error: {e}"))?
+}
+
+#[cfg(windows)]
+pub(crate) fn replace_file_atomically(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source_wide = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let destination_wide = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn replace_file_atomically(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::rename(source, destination)
 }
 
 #[tauri::command]
@@ -1240,6 +1326,40 @@ pub async fn delete_file(path: String) -> Result<(), String> {
     .map_err(|e| format!("delete_file blocking task join error: {e}"))?
 }
 
+#[tauri::command]
+pub async fn delete_managed_review_file(project_path: String, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("delete_managed_review_file", || {
+            let target = resolve_managed_review_file(&project_path, &path)?;
+            file_sync::mark_app_write_path(&target);
+            remove_path_with_retry(target.to_string_lossy().as_ref(), false)
+                .map_err(|error| format!("Failed to delete managed file: {error}"))?;
+            file_sync::mark_app_write_path(&target);
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|error| format!("delete_managed_review_file blocking task join error: {error}"))?
+}
+
+fn resolve_managed_review_file(project_path: &str, path: &str) -> Result<PathBuf, String> {
+    let root = Path::new(project_path)
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve project root: {error}"))?;
+    let target = Path::new(path)
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve delete target: {error}"))?;
+    if !target.is_file() {
+        return Err("Review actions may delete regular files only".to_string());
+    }
+    let allowed = target.starts_with(root.join("wiki"))
+        || target.starts_with(root.join("raw").join("sources"));
+    if !allowed {
+        return Err("Review delete target is outside managed project roots".to_string());
+    }
+    Ok(target)
+}
+
 fn remove_path_with_retry(path: &str, is_dir: bool) -> Result<(), std::io::Error> {
     let mut last_err: Option<std::io::Error> = None;
     for attempt in 0..4 {
@@ -1367,47 +1487,48 @@ fn collect_related_pages(
                 // wiped. Tightened: scope the substring check to the
                 // `sources:` block only (inline line + any indented
                 // continuation lines of a YAML list).
-                let frontmatter_match = if content.starts_with("---\n") {
-                    if let Some(fm_end_rel) = content[4..].find("\n---") {
-                        let frontmatter = &content[4..4 + fm_end_rel].to_lowercase();
-                        let mut found = false;
-                        let mut in_sources_block = false;
-                        for line in frontmatter.split('\n') {
-                            if line.starts_with("sources:") {
-                                // Inline-form `sources: [...]` lives
-                                // entirely on this one line; check it.
-                                if line.contains(&file_name_lower) {
-                                    found = true;
-                                    break;
-                                }
-                                in_sources_block = true;
-                                continue;
-                            }
-                            if in_sources_block {
-                                // Continuation lines of a YAML list are
-                                // indented; an un-indented line means
-                                // we've left the sources block for
-                                // another top-level field.
-                                if line.is_empty()
-                                    || line.starts_with(' ')
-                                    || line.starts_with('\t')
-                                {
+                let frontmatter_match =
+                    if let Some(frontmatter_body) = content.strip_prefix("---\n") {
+                        if let Some(fm_end_rel) = frontmatter_body.find("\n---") {
+                            let frontmatter = &frontmatter_body[..fm_end_rel].to_lowercase();
+                            let mut found = false;
+                            let mut in_sources_block = false;
+                            for line in frontmatter.split('\n') {
+                                if line.starts_with("sources:") {
+                                    // Inline-form `sources: [...]` lives
+                                    // entirely on this one line; check it.
                                     if line.contains(&file_name_lower) {
                                         found = true;
                                         break;
                                     }
-                                } else {
-                                    in_sources_block = false;
+                                    in_sources_block = true;
+                                    continue;
+                                }
+                                if in_sources_block {
+                                    // Continuation lines of a YAML list are
+                                    // indented; an un-indented line means
+                                    // we've left the sources block for
+                                    // another top-level field.
+                                    if line.is_empty()
+                                        || line.starts_with(' ')
+                                        || line.starts_with('\t')
+                                    {
+                                        if line.contains(&file_name_lower) {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else {
+                                        in_sources_block = false;
+                                    }
                                 }
                             }
+                            found
+                        } else {
+                            false
                         }
-                        found
                     } else {
                         false
-                    }
-                } else {
-                    false
-                };
+                    };
 
                 if sources_match || is_source_summary || frontmatter_match {
                     // Normalize to forward slashes — matches build_tree /
@@ -1635,6 +1756,24 @@ mod tests {
         assert!(result.is_err() || result.is_ok()); // must at least return
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn limited_text_reader_rejects_oversized_files_without_returning_content() {
+        let path = std::env::temp_dir().join(format!(
+            "potato-box-limited-text-{}.md",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, b"0123456789").unwrap();
+
+        let error = read_text_file_limited(path.to_string_lossy().to_string(), 5)
+            .await
+            .unwrap_err();
+        let _ = fs::remove_file(path);
+        assert!(error.contains("too large"));
+    }
+
     #[test]
     fn extract_doc_with_office_oxide_handles_missing_file() {
         let result = extract_doc_with_office_oxide("/nonexistent/path/that/does/not/exist.doc");
@@ -1646,7 +1785,7 @@ mod tests {
     async fn write_file_base64_writes_decoded_binary_bytes() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!(
-            "llm-wiki-base64-{}.bin",
+            "potato-box-base64-{}.bin",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1667,7 +1806,7 @@ mod tests {
     async fn write_file_base64_rejects_invalid_base64_and_relative_paths() {
         let invalid = write_file_base64(
             std::env::temp_dir()
-                .join("llm-wiki-invalid-base64.bin")
+                .join("potato-box-invalid-base64.bin")
                 .to_string_lossy()
                 .to_string(),
             "not!!base64".to_string(),
@@ -1692,8 +1831,10 @@ mod tests {
     #[test]
     #[ignore = "local probe; set PDF_PROBE_DIR"]
     fn pdf_probe() {
-        let dir = std::env::var("PDF_PROBE_DIR")
-            .unwrap_or_else(|_| "/Users/nash_su/Downloads/pdftests".to_string());
+        let Ok(dir) = std::env::var("PDF_PROBE_DIR") else {
+            eprintln!("[pdf_probe] set PDF_PROBE_DIR to a directory containing PDFs");
+            return;
+        };
         let root = std::path::Path::new(&dir);
         if !root.exists() {
             eprintln!("[pdf_probe] dir not found: {}", root.display());
@@ -2010,7 +2151,7 @@ mod tests {
 
     fn make_temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "llmwiki-copydir-{label}-{}",
+            "potato-box-copydir-{label}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

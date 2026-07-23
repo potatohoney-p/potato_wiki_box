@@ -8,13 +8,13 @@
  * sorted — see the canonical key logic in `dedup.ts`).
  *
  * Lives next to ingest-cache.json / image-caption-cache.json /
- * lexical-graph.json (when added) — same `.llm-wiki/` directory,
+ * lexical-graph.json (when added) — same `.potato-box/` directory,
  * same JSON-on-disk pattern.
  */
 import { readFile, writeFile, fileExists } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 
-const FILE_NAME = ".llm-wiki/dedup-not-duplicates.json"
+const FILE_NAME = ".potato-box/dedup-not-duplicates.json"
 
 export async function loadNotDuplicates(projectPath: string): Promise<string[][]> {
   const pp = normalizePath(projectPath)

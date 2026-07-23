@@ -18,7 +18,7 @@ export function loadMcpServerVersion(metaUrl: string = import.meta.url): string 
     }
   }
 
-  process.stderr.write("[llm-wiki-mcp] package.json version not found; using fallback 0.0.0\n")
+  process.stderr.write("[potato-box-mcp] package.json version not found; using fallback 0.0.0\n")
   return FALLBACK_VERSION
 }
 

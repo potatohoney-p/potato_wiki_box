@@ -16,8 +16,8 @@ use walkdir::WalkDir;
 
 use crate::panic_guard::run_guarded;
 
-const SNAPSHOT_FILE: &str = ".llm-wiki/file-snapshot.json";
-const QUEUE_FILE: &str = ".llm-wiki/file-change-queue.json";
+const SNAPSHOT_FILE: &str = ".potato-box/file-snapshot.json";
+const QUEUE_FILE: &str = ".potato-box/file-change-queue.json";
 const EVENT_QUEUE_UPDATED: &str = "file-sync://queue-updated";
 const EVENT_CHANGED: &str = "file-sync://changed";
 const MAX_HASH_BYTES: u64 = 32 * 1024 * 1024;
@@ -940,8 +940,9 @@ fn write_task_meta_to_snapshot(
 
 fn reset_processing_tasks(root: &Path, project_id: &str) -> Result<(), String> {
     let mut queue = read_queue(root)?;
-    let mut changed = false;
+    let original_len = queue.tasks.len();
     queue.tasks.retain(|task| task.project_id == project_id);
+    let mut changed = queue.tasks.len() != original_len;
     for task in &mut queue.tasks {
         if task.status == FileChangeStatus::Processing {
             task.status = FileChangeStatus::Pending;
@@ -1063,7 +1064,9 @@ fn should_watch_rel(rel: &str, rules: &SourceWatchRules) -> bool {
         return false;
     }
     let lower = rel.to_lowercase();
-    if lower.contains("/.llm-wiki/")
+    if lower.contains("/.potato-box/")
+        || lower.starts_with(".potato-box/")
+        || lower.contains("/.llm-wiki/")
         || lower.starts_with(".llm-wiki/")
         // App-managed generated media is intentionally ignored here. The
         // source markdown references drive graph/index refresh; media bytes
@@ -1122,7 +1125,7 @@ impl<'a> SourceWatchRules<'a> {
                 .map(|dir| normalize_rel_string(dir).to_lowercase())
                 .filter(|dir| !dir.is_empty())
                 .collect(),
-            exclude_globs: config.exclude_globs.iter().cloned().collect(),
+            exclude_globs: config.exclude_globs.to_vec(),
         }
     }
 
@@ -1228,8 +1231,8 @@ fn emit_changed_batch(app: &AppHandle, project_id: &str, tasks: Vec<FileChangeTa
 }
 
 fn ensure_sync_dir(root: &Path) -> Result<(), String> {
-    fs::create_dir_all(root.join(".llm-wiki"))
-        .map_err(|e| format!("Failed to create .llm-wiki: {e}"))
+    fs::create_dir_all(root.join(".potato-box"))
+        .map_err(|e| format!("Failed to create .potato-box: {e}"))
 }
 
 fn read_snapshot(root: &Path) -> Result<FileSnapshot, String> {
@@ -1395,7 +1398,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("llm-wiki-file-sync-{name}-{stamp}"));
+        let root = std::env::temp_dir().join(format!("potato-box-file-sync-{name}-{stamp}"));
         fs::create_dir_all(root.join("raw/sources")).unwrap();
         root
     }
@@ -1592,7 +1595,7 @@ mod tests {
         assert!(should_watch_rel("raw/sources/document.docx", &rules));
         assert!(should_watch_rel("wiki/concepts/topic.md", &rules));
         assert!(!should_watch_rel(
-            ".llm-wiki/file-change-queue.json",
+            ".potato-box/file-change-queue.json",
             &rules
         ));
         assert!(!should_watch_rel("raw/sources/~$Document.docx", &rules));

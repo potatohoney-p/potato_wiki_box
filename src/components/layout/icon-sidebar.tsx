@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import {
-  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, MessageSquare,
+  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, MessageSquare, HeartPulse,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -25,6 +25,7 @@ const NAV_ITEMS: { view: NavView; icon: typeof FileText; labelKey: string }[] = 
   { view: "graph", icon: Network, labelKey: "nav.graph" },
   { view: "lint", icon: ClipboardCheck, labelKey: "nav.lint" },
   { view: "review", icon: ClipboardList, labelKey: "nav.review" },
+  { view: "health", icon: HeartPulse, labelKey: "nav.health" },
 ]
 
 interface IconSidebarProps {
@@ -71,6 +72,12 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
     toggleResearchPanel(next.researchPanelOpen)
   }
 
+  const daemonStatusLabel =
+    daemonStatus === "running" ? t("nav.clipServerRunning") :
+    daemonStatus === "starting" ? t("nav.clipServerStarting") :
+    daemonStatus === "port_conflict" ? t("nav.clipServerPortConflict") :
+    t("nav.clipServerError")
+
   return (
     <TooltipProvider delay={300}>
       <div className="flex h-full w-12 flex-col items-center border-r bg-muted/50 py-2">
@@ -78,7 +85,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
         <div className="mb-2 flex items-center justify-center">
           <img
             src={logoImg}
-            alt="LLM Wiki"
+            alt="potato box"
             className="h-8 w-8 rounded-[22%]"
           />
         </div>
@@ -87,7 +94,11 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           {NAV_ITEMS.map(({ view, icon: Icon, labelKey }) => (
             <Tooltip key={view}>
               <TooltipTrigger
+                type="button"
                 onClick={() => setActiveView(view)}
+                aria-label={t(labelKey)}
+                aria-current={activeView === view ? "page" : undefined}
+                title={t(labelKey)}
                 className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
                   activeView === view
                     ? "bg-accent text-accent-foreground"
@@ -110,7 +121,11 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           {/* Deep Research — same row as other nav items */}
           <Tooltip>
             <TooltipTrigger
+              type="button"
               onClick={handleResearchPanelToggle}
+              aria-label={t("research.title")}
+              aria-current={isResearchPanelVisible(activeView, researchPanelOpen) ? "page" : undefined}
+              title={t("research.title")}
               className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
                 isResearchPanelVisible(activeView, researchPanelOpen)
                   ? "bg-accent text-accent-foreground"
@@ -131,7 +146,12 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
         <div className="flex flex-col items-center gap-1 pb-1">
           {/* Daemon status indicator */}
           <Tooltip>
-            <TooltipTrigger className="flex h-6 w-6 items-center justify-center">
+            <TooltipTrigger
+              type="button"
+              className="flex h-6 w-6 items-center justify-center"
+              aria-label={daemonStatusLabel}
+              title={daemonStatusLabel}
+            >
               <span
                 className={`h-2.5 w-2.5 rounded-full ${
                   daemonStatus === "running" ? "bg-emerald-500" :
@@ -141,16 +161,15 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
                 }`}
               />
             </TooltipTrigger>
-            <TooltipContent side="right">
-              {daemonStatus === "running" && "Clip server running"}
-              {daemonStatus === "starting" && "Clip server starting..."}
-              {daemonStatus === "port_conflict" && "Port 19827 is occupied. Web Clipper unavailable."}
-              {daemonStatus === "error" && "Clip server error. Restarting..."}
-            </TooltipContent>
+            <TooltipContent side="right">{daemonStatusLabel}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
+              type="button"
               onClick={() => setActiveView("settings")}
+              aria-label={`${t("nav.settings")}${updateAvailable ? t("nav.updateAvailableSuffix") : ""}`}
+              aria-current={activeView === "settings" ? "page" : undefined}
+              title={t("nav.settings")}
               className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
                 activeView === "settings"
                   ? "bg-accent text-accent-foreground"
@@ -181,7 +200,10 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
+              type="button"
               onClick={onSwitchProject}
+              aria-label={t("nav.switchProject")}
+              title={t("nav.switchProject")}
               className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground"
             >
               <ArrowLeftRight className="h-5 w-5" />

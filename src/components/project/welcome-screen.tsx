@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { getRecentProjects, removeFromRecentProjects } from "@/lib/project-store"
 import type { WikiProject } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
+import logoImg from "@/assets/logo.jpg"
 
 interface WelcomeScreenProps {
   onCreateProject: () => void
@@ -32,20 +33,21 @@ export function WelcomeScreen({
 
   return (
     <div className="flex h-full items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-8 px-4">
+      <div className="flex w-full max-w-lg flex-col items-center gap-7 px-4">
         <div className="text-center">
+          <img src={logoImg} alt="" className="mx-auto mb-2 h-20 w-20 rounded-md object-cover" />
           <h1 className="text-3xl font-bold">{t("app.title")}</h1>
-          <p className="mt-2 text-muted-foreground">
+          <p className="mx-auto mt-2 max-w-md text-pretty text-muted-foreground">
             {t("app.subtitle")}
           </p>
         </div>
 
-        <div className="flex gap-3">
-          <Button onClick={onCreateProject}>
+        <div className="flex flex-wrap justify-center gap-3">
+          <Button onClick={onCreateProject} className="max-sm:min-h-11">
             <Plus className="mr-2 h-4 w-4" />
             {t("welcome.newProject")}
           </Button>
-          <Button variant="outline" onClick={onOpenProject}>
+          <Button variant="outline" onClick={onOpenProject} className="max-sm:min-h-11">
             <FolderOpen className="mr-2 h-4 w-4" />
             {t("welcome.openProject")}
           </Button>
@@ -57,31 +59,29 @@ export function WelcomeScreen({
               <Clock className="h-3.5 w-3.5" />
               {t("welcome.recentProjects")}
             </div>
-            <div className="rounded-lg border">
+            <div className="overflow-hidden rounded-md border">
               {recentProjects.map((proj) => (
-                <button
-                  key={proj.path}
-                  onClick={() => onSelectProject(proj)}
-                  className="group flex w-full items-center justify-between border-b px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-accent"
-                >
-                  <div className="min-w-0 flex-1">
+                <div key={proj.path} className="group flex items-stretch border-b last:border-b-0 hover:bg-accent">
+                  <button
+                    type="button"
+                    onClick={() => onSelectProject(proj)}
+                    className="min-w-0 flex-1 px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  >
                     <div className="truncate text-sm font-medium">{proj.name}</div>
-                    <div className="truncate text-xs text-muted-foreground">
+                    <div className="truncate text-xs text-muted-foreground" title={proj.path}>
                       {proj.path}
                     </div>
-                  </div>
-                  <div
-                    role="button"
-                    tabIndex={0}
+                  </button>
+                  <button
+                    type="button"
                     onClick={(e) => handleRemoveRecent(e, proj.path)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleRemoveRecent(e as unknown as React.MouseEvent, proj.path)
-                    }}
-                    className="ml-2 shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100"
+                    className="m-2 flex size-8 shrink-0 items-center justify-center rounded-md opacity-60 transition-colors hover:bg-destructive/10 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                    aria-label={t("welcome.removeRecent", { name: proj.name })}
+                    title={t("welcome.removeRecent", { name: proj.name })}
                   >
                     <X className="h-3.5 w-3.5 text-muted-foreground" />
-                  </div>
-                </button>
+                  </button>
+                </div>
               ))}
             </div>
           </div>

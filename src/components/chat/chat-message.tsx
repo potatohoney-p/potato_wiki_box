@@ -18,11 +18,11 @@ import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName } from "@/lib/path-utils"
-import { makeQueryFileName } from "@/lib/wiki-filename"
+import { deriveQueryTitle, makeQueryFileName } from "@/lib/wiki-filename"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { messageImageToDataUrl } from "@/lib/chat-image-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
-import { transformImageEmbeds } from "@/lib/wikilink-transform"
+import { stripHtmlComments, transformImageEmbeds } from "@/lib/wikilink-transform"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
@@ -192,8 +192,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       // See `src/lib/wiki-filename.ts` — the slug is Unicode-aware
       // (so CJK titles don't collapse to empty) and the HHMMSS
       // timestamp suffix guarantees same-day saves stay distinct.
-      const firstLine = content.split("\n")[0].replace(/^#+\s*/, "").trim()
-      const title = firstLine.slice(0, 60) || "Saved Query"
+      const title = deriveQueryTitle(content)
       const { date, fileName } = makeQueryFileName(title)
       const filePath = `${pp}/wiki/queries/${fileName}`
 
@@ -729,8 +728,7 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  // Strip hidden comments
-  const cleaned = content.replace(/<!--.*?-->/gs, "").trimEnd()
+  const cleaned = stripHtmlComments(content).trimEnd()
 
   // Project path for resolving wiki-relative image src in chat
   // replies (LLM may surface images that came in via retrieved

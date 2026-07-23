@@ -2,7 +2,7 @@
 //!
 //! Users with a Claude Code subscription already have OAuth credentials
 //! in ~/.claude/ and the `claude` binary on PATH. This module lets LLM
-//! Wiki reuse that subscription instead of requiring a separate API key.
+//! potato box reuse that subscription instead of requiring a separate API key.
 //! We treat `claude` purely as a text-completion engine — its agent
 //! tools, MCPs, file-edit abilities, and --resume session state are all
 //! out of scope. Multi-turn history is reconstructed from `messages`
@@ -122,8 +122,6 @@ async fn find_claude_command() -> Result<PathBuf, String> {
 fn suppress_windows_console(_cmd: &mut Command) {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         _cmd.creation_flags(CREATE_NO_WINDOW);
     }

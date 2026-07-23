@@ -46,6 +46,7 @@ interface ChatState {
   messages: DisplayMessage[]
   isStreaming: boolean
   streamingContent: string
+  streamingConversationId: string | null
   mode: "chat" | "ingest"
   ingestSource: string | null
   maxHistoryMessages: number
@@ -57,12 +58,12 @@ interface ChatState {
   renameConversation: (id: string, title: string) => void
 
   // Message management
-  addMessage: (role: DisplayMessage["role"], content: string, images?: MessageImage[]) => void
+  addMessage: (role: DisplayMessage["role"], content: string, images?: MessageImage[], conversationId?: string) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
-  setStreaming: (streaming: boolean) => void
-  appendStreamToken: (token: string) => void
-  finalizeStream: (content: string, references?: MessageReference[]) => void
+  setStreaming: (streaming: boolean, conversationId?: string) => void
+  appendStreamToken: (token: string, conversationId?: string) => void
+  finalizeStream: (content: string, references?: MessageReference[], conversationId?: string) => void
   setMode: (mode: ChatState["mode"]) => void
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
@@ -73,15 +74,12 @@ interface ChatState {
   getActiveMessages: () => DisplayMessage[]
 }
 
-let messageCounter = 0
-
 function nextId(): string {
-  messageCounter += 1
-  return String(messageCounter)
+  return `msg_${crypto.randomUUID()}`
 }
 
 function generateConversationId(): string {
-  return `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  return `conv_${crypto.randomUUID()}`
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -90,6 +88,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   isStreaming: false,
   streamingContent: "",
+  streamingConversationId: null,
   mode: "chat",
   ingestSource: null,
   maxHistoryMessages: 10,
@@ -121,6 +120,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: remaining,
         messages: state.messages.filter((m) => m.conversationId !== id),
         activeConversationId: newActiveId,
+        ...(state.streamingConversationId === id
+          ? { isStreaming: false, streamingContent: "", streamingConversationId: null }
+          : {}),
       }
     }),
 
@@ -133,28 +135,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     })),
 
-  addMessage: (role, content, images) =>
+  addMessage: (role, content, images, conversationId) =>
     set((state) => {
-      const { activeConversationId, conversations } = state
-      if (!activeConversationId) return state
+      const targetConversationId = conversationId ?? state.activeConversationId
+      const { conversations } = state
+      if (!targetConversationId || !conversations.some((conversation) => conversation.id === targetConversationId)) return state
 
       const newMessage: DisplayMessage = {
         id: nextId(),
         role,
         content,
         timestamp: Date.now(),
-        conversationId: activeConversationId,
+        conversationId: targetConversationId,
         ...(images && images.length > 0 ? { images } : {}),
       }
 
       // Auto-set title from first user message (first 50 chars)
       const convMessages = state.messages.filter(
-        (m) => m.conversationId === activeConversationId && m.role === "user"
+        (m) => m.conversationId === targetConversationId && m.role === "user"
       )
       const updatedConversations =
         role === "user" && convMessages.length === 0
           ? conversations.map((c) =>
-              c.id === activeConversationId
+              c.id === targetConversationId
                 ? {
                     ...c,
                     // Image-only first message has empty text; fall
@@ -166,7 +169,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 : c
             )
           : conversations.map((c) =>
-              c.id === activeConversationId
+              c.id === targetConversationId
                 ? { ...c, updatedAt: Date.now() }
                 : c
             )
@@ -181,20 +184,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setConversations: (conversations) => set({ conversations }),
 
-  setStreaming: (isStreaming) => set({ isStreaming }),
-
-  appendStreamToken: (token) =>
-    set((state) => ({
-      streamingContent: state.streamingContent + token,
-    })),
-
-  finalizeStream: (content, references) =>
+  setStreaming: (isStreaming, conversationId) =>
     set((state) => {
-      const { activeConversationId, conversations } = state
-      if (!activeConversationId) {
+      if (isStreaming) {
+        const target = conversationId ?? state.activeConversationId
+        if (!target || !state.conversations.some((conversation) => conversation.id === target)) {
+          return { isStreaming: false, streamingContent: "", streamingConversationId: null }
+        }
+        return { isStreaming: true, streamingContent: "", streamingConversationId: target }
+      }
+      if (conversationId && state.streamingConversationId !== conversationId) return state
+      return { isStreaming: false, streamingContent: "", streamingConversationId: null }
+    }),
+
+  appendStreamToken: (token, conversationId) =>
+    set((state) => {
+      const target = conversationId ?? state.streamingConversationId
+      if (!state.isStreaming || !target || state.streamingConversationId !== target) return state
+      return { streamingContent: state.streamingContent + token }
+    }),
+
+  finalizeStream: (content, references, conversationId) =>
+    set((state) => {
+      const targetConversationId = conversationId ?? state.streamingConversationId
+      const { conversations } = state
+      if (
+        !targetConversationId ||
+        state.streamingConversationId !== targetConversationId ||
+        !conversations.some((conversation) => conversation.id === targetConversationId)
+      ) {
         return {
-          isStreaming: false,
-          streamingContent: "",
+          ...(state.streamingConversationId === targetConversationId
+            ? { isStreaming: false, streamingContent: "", streamingConversationId: null }
+            : {}),
         }
       }
 
@@ -203,16 +225,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         role: "assistant" as const,
         content,
         timestamp: Date.now(),
-        conversationId: activeConversationId,
+        conversationId: targetConversationId,
         references,
       }
 
       return {
         isStreaming: false,
         streamingContent: "",
+        streamingConversationId: null,
         messages: [...state.messages, newMessage],
         conversations: conversations.map((c) =>
-          c.id === activeConversationId
+          c.id === targetConversationId
             ? { ...c, updatedAt: Date.now() }
             : c
         ),
@@ -242,7 +265,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (lastAssistantIdx === -1) return state
       const msgToRemove = activeMessages[activeMessages.length - 1 - lastAssistantIdx]
       return {
-        messages: state.messages.filter((m) => m.id !== msgToRemove.id),
+        messages: state.messages.filter(
+          (message) =>
+            message.conversationId !== activeId || message.id !== msgToRemove.id,
+        ),
       }
     }),
 

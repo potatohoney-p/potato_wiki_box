@@ -29,7 +29,7 @@ interface LlmConfig {
   apiMode?: CustomApiMode
   reasoning?: ReasoningConfig
   /**
-   * Local CLI providers only. When true, LLM Wiki asks Claude/Codex CLI
+   * Local CLI providers only. When true, potato box asks Claude/Codex CLI
    * to ignore user-level rules/config/MCP/tool state where the CLI exposes
    * such controls. Default false preserves existing advanced-user setups.
    */
@@ -182,18 +182,15 @@ interface ScheduledImportConfig {
  *
  *   - `enabled` gates all non-/health endpoints. Default `true` so an
  *     env-token-only setup keeps working after the toggle is added.
- *   - `allowUnauthenticated` lets local agents call the API without a
- *     token. It is explicit and default-off.
  *   - `mcpEnabled` allows the optional MCP stdio server to use this
  *     API. It is separate from the HTTP API kill-switch so users can
  *     expose scripts while keeping MCP disabled.
  *   - `token` is the bearer secret. Empty + auth required =
  *     every non-/health request returns 401. The env var
- *     `LLM_WIKI_API_TOKEN` overrides this field at the backend.
+ *     `POTATO_BOX_API_TOKEN` overrides this field at the backend.
  */
 interface ApiConfig {
   enabled: boolean
-  allowUnauthenticated: boolean
   mcpEnabled: boolean
   token: string
 }
@@ -320,7 +317,7 @@ interface WikiState {
    * one wiki-relative) still works.
    */
   pendingScrollImageSrc: string | null
-  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
+  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "health" | "settings"
   llmConfig: LlmConfig
   /** Per-provider-preset stored overrides (API key, model, endpoint, …). */
   providerConfigs: ProviderConfigs
@@ -467,13 +464,12 @@ export const useWikiStore = create<WikiState>((set) => ({
   mineruConfig: { enabled: false, token: "", modelVersion: "vlm" },
 
   // Default `enabled: true` preserves the pre-toggle behavior: anyone
-  // who already had `LLM_WIKI_API_TOKEN` set or `apiConfig.token`
+  // who already had `POTATO_BOX_API_TOKEN` or `apiConfig.token`
   // hand-edited keeps their working API. New users land in
   // "enabled + no token = 401 on every endpoint" — fail-closed by
   // virtue of the token being empty.
   apiConfig: {
     enabled: true,
-    allowUnauthenticated: false,
     mcpEnabled: false,
     token: "",
   },

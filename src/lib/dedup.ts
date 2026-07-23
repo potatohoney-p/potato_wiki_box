@@ -88,7 +88,7 @@ export interface MergeResult {
    *  Excludes the canonical path. */
   pagesToDelete: string[]
   /** Snapshot of every file the merge touches BEFORE the merge
-   *  was computed. Caller persists this to .llm-wiki/page-history/
+   *  was computed. Caller persists this to .potato-box/page-history/
    *  before writing changes so a bad merge can be rolled back. */
   backup: { path: string; content: string }[]
 }

@@ -15,13 +15,14 @@
  * same retry-up-to-3 policy, same registry-based path resolution so
  * a relocated project still finds its tasks.
  */
-import { readFile, writeFile } from "@/commands/fs"
+import { writeFileAtomic } from "@/commands/fs"
 import { useWikiStore } from "@/stores/wiki-store"
 import { normalizePath } from "@/lib/path-utils"
 import { getProjectPathById } from "@/lib/project-identity"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { executeMerge } from "@/lib/dedup-runner"
 import type { DuplicateGroup } from "@/lib/dedup"
+import { readDurableJson } from "@/lib/durable-json"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -43,36 +44,50 @@ let processing = false
 let currentProjectId = ""
 let currentProjectPath = ""
 let currentAbortController: AbortController | null = null
+let runnerEpoch = 0
+let activeRunner: Promise<void> | null = null
 
 // ── Persistence ───────────────────────────────────────────────────────────
 
 function queueFilePath(projectPath: string): string {
-  return `${normalizePath(projectPath)}/.llm-wiki/dedup-queue.json`
+  return `${normalizePath(projectPath)}/.potato-box/dedup-queue.json`
 }
 
-async function saveQueue(projectPath: string): Promise<void> {
-  try {
-    const toSave = queue.filter((t) => t.status !== "done")
-    await writeFile(queueFilePath(projectPath), JSON.stringify(toSave, null, 2))
-  } catch {
-    // non-critical
-  }
+function serializedQueue(): string {
+  return JSON.stringify(queue.filter((task) => task.status !== "done"), null, 2)
+}
+
+/** Durability barrier used when navigation depends on the queue being saved. */
+async function persistQueue(projectPath: string): Promise<void> {
+  await writeFileAtomic(queueFilePath(projectPath), serializedQueue())
 }
 
 async function loadQueue(
   projectPath: string,
   projectId: string,
 ): Promise<DedupTask[]> {
-  try {
-    const raw = await readFile(queueFilePath(projectPath))
-    const tasks = JSON.parse(raw) as DedupTask[]
-    return tasks.map((t) => ({
-      ...t,
-      projectId: t.projectId ?? projectId,
-    }))
-  } catch {
-    return []
-  }
+  const tasks = await readDurableJson(
+    queueFilePath(projectPath),
+    isDedupTaskArray,
+    "Duplicate merge queue",
+  )
+  if (!tasks) return []
+  return tasks.map((task) => ({ ...task, projectId: task.projectId ?? projectId }))
+}
+
+function isDedupTaskArray(value: unknown): value is DedupTask[] {
+  return Array.isArray(value) && value.every((task) => {
+    if (!task || typeof task !== "object") return false
+    const candidate = task as Partial<DedupTask>
+    return typeof candidate.id === "string"
+      && (candidate.projectId === undefined || typeof candidate.projectId === "string")
+      && Boolean(candidate.group && Array.isArray(candidate.group.slugs))
+      && typeof candidate.canonicalSlug === "string"
+      && ["pending", "processing", "done", "failed"].includes(String(candidate.status))
+      && typeof candidate.addedAt === "number"
+      && (candidate.error === null || typeof candidate.error === "string")
+      && typeof candidate.retryCount === "number"
+  })
 }
 
 // ── Queue Operations ──────────────────────────────────────────────────────
@@ -127,7 +142,12 @@ export async function enqueueMerge(
   }
 
   queue.push(task)
-  await saveQueue(currentProjectPath)
+  try {
+    await persistQueue(currentProjectPath)
+  } catch (error) {
+    queue = queue.filter((candidate) => candidate.id !== task.id)
+    throw error
+  }
   processNext(currentProjectId)
   return task.id
 }
@@ -142,10 +162,20 @@ export async function retryTask(taskId: string): Promise<void> {
   if (!task) return
   if (task.projectId !== currentProjectId) return
 
+  const previous = {
+    status: task.status,
+    error: task.error,
+    retryCount: task.retryCount,
+  }
   task.status = "pending"
   task.error = null
   task.retryCount = 0
-  await saveQueue(currentProjectPath)
+  try {
+    await persistQueue(currentProjectPath)
+  } catch (error) {
+    Object.assign(task, previous)
+    throw error
+  }
   processNext(currentProjectId)
 }
 
@@ -155,20 +185,30 @@ export async function retryTask(taskId: string): Promise<void> {
  * abort fired. Backup snapshots already on disk are kept either way.
  */
 export async function cancelTask(taskId: string): Promise<void> {
-  const task = queue.find((t) => t.id === taskId)
+  let task = queue.find((t) => t.id === taskId)
   if (!task) return
   if (task.projectId !== currentProjectId) return
 
   if (task.status === "processing") {
+    runnerEpoch++
     if (currentAbortController) {
       currentAbortController.abort()
-      currentAbortController = null
     }
-    processing = false
+    await activeRunner?.catch(() => undefined)
+    task = queue.find((candidate) => candidate.id === taskId)
+    if (!task) return
+    task.status = "pending"
   }
 
+  const previousQueue = queue
   queue = queue.filter((t) => t.id !== taskId)
-  await saveQueue(currentProjectPath)
+  try {
+    await persistQueue(currentProjectPath)
+  } catch (error) {
+    queue = previousQueue
+    processNext(currentProjectId)
+    throw error
+  }
   processNext(currentProjectId)
 }
 
@@ -196,6 +236,7 @@ export function getQueueSummary(): {
  * the right project's file before the slate is cleared.
  */
 export function clearQueueState(): void {
+  runnerEpoch++
   if (currentAbortController) {
     currentAbortController.abort()
   }
@@ -204,6 +245,7 @@ export function clearQueueState(): void {
   currentProjectId = ""
   currentProjectPath = ""
   currentAbortController = null
+  activeRunner = null
 }
 
 /**
@@ -215,12 +257,11 @@ export async function pauseQueue(): Promise<void> {
   if (!currentProjectId || !currentProjectPath) return
 
   const pausedProjectPath = currentProjectPath
-
+  runnerEpoch++
   if (currentAbortController) {
     currentAbortController.abort()
-    currentAbortController = null
   }
-  processing = false
+  await activeRunner?.catch(() => undefined)
 
   for (const task of queue) {
     if (task.status === "processing") {
@@ -228,11 +269,18 @@ export async function pauseQueue(): Promise<void> {
     }
   }
 
-  await saveQueue(pausedProjectPath)
+  // A project switch is allowed only after the current queue is durable. On
+  // failure the in-memory queue remains associated with this project.
+  try {
+    await persistQueue(pausedProjectPath)
+  } catch (error) {
+    throw error
+  }
 
   queue = []
   currentProjectId = ""
   currentProjectPath = ""
+  currentAbortController = null
 }
 
 /**
@@ -248,6 +296,8 @@ export async function restoreQueue(
   queue = []
   processing = false
   currentAbortController = null
+  runnerEpoch++
+  activeRunner = null
   currentProjectId = projectId
   currentProjectPath = pp
 
@@ -270,7 +320,7 @@ export async function restoreQueue(
   }
 
   queue = mine
-  await saveQueue(pp)
+  await persistQueue(pp)
 
   const pending = queue.filter((t) => t.status === "pending").length
   const failed = queue.filter((t) => t.status === "failed").length
@@ -286,9 +336,31 @@ export async function restoreQueue(
 
 const MAX_RETRIES = 3
 
-async function processNext(projectId: string): Promise<void> {
-  if (processing) return
+function processNext(projectId: string): void {
+  if (processing || activeRunner) return
   if (currentProjectId !== projectId) return
+  if (!queue.some((task) => task.projectId === projectId && task.status === "pending")) {
+    return
+  }
+
+  const epoch = runnerEpoch
+  processing = true
+  const run = processOne(projectId, epoch)
+  activeRunner = run
+  void run.finally(() => {
+    if (activeRunner !== run) return
+    activeRunner = null
+    processing = false
+    if (currentProjectId === projectId && runnerEpoch === epoch) {
+      processNext(projectId)
+    }
+  }).catch((error) => {
+    console.error("[Dedup Queue] Runner stopped:", error)
+  })
+}
+
+async function processOne(projectId: string, epoch: number): Promise<void> {
+  if (currentProjectId !== projectId || runnerEpoch !== epoch) return
 
   const next = queue.find(
     (t) => t.projectId === projectId && t.status === "pending",
@@ -297,28 +369,25 @@ async function processNext(projectId: string): Promise<void> {
 
   const registryPath = await getProjectPathById(projectId)
   const pp = registryPath ? normalizePath(registryPath) : ""
-  if (currentProjectId !== projectId) return
+  if (currentProjectId !== projectId || runnerEpoch !== epoch) return
 
   if (!pp) {
     next.status = "failed"
     next.error = "Project not found in registry (was it deleted?)"
-    await saveQueue(currentProjectPath)
-    processNext(projectId)
+    await persistQueue(currentProjectPath)
     return
   }
 
-  processing = true
   next.status = "processing"
-  await saveQueue(pp)
-  if (currentProjectId !== projectId) return
+  await persistQueue(pp)
+  if (currentProjectId !== projectId || runnerEpoch !== epoch) return
 
   const llmConfig = useWikiStore.getState().llmConfig
 
   if (!hasUsableLlm(llmConfig)) {
     next.status = "failed"
     next.error = "LLM not configured — set API key in Settings"
-    processing = false
-    await saveQueue(pp)
+    await persistQueue(pp)
     return
   }
 
@@ -326,24 +395,23 @@ async function processNext(projectId: string): Promise<void> {
     `[Dedup Queue] Processing: merge ${next.group.slugs.join(",")} → ${next.canonicalSlug}`,
   )
 
-  currentAbortController = new AbortController()
+  const controller = new AbortController()
+  currentAbortController = controller
 
   try {
     await executeMerge(pp, next.group, next.canonicalSlug, llmConfig, {
-      signal: currentAbortController.signal,
+      signal: controller.signal,
     })
-    if (currentProjectId !== projectId) return
+    if (currentProjectId !== projectId || runnerEpoch !== epoch) return
 
-    currentAbortController = null
     queue = queue.filter((t) => t.id !== next.id)
-    await saveQueue(pp)
+    await persistQueue(pp)
     // Tell the rest of the app the wiki tree changed.
     useWikiStore.getState().bumpDataVersion()
 
     console.log(`[Dedup Queue] Done: ${next.group.slugs.join(",")}`)
   } catch (err) {
-    if (currentProjectId !== projectId) return
-    currentAbortController = null
+    if (currentProjectId !== projectId || runnerEpoch !== epoch) return
     const message = err instanceof Error ? err.message : String(err)
     next.retryCount++
     next.error = message
@@ -359,9 +427,10 @@ async function processNext(projectId: string): Promise<void> {
         `[Dedup Queue] Error (retry ${next.retryCount}/${MAX_RETRIES}): ${next.group.slugs.join(",")} — ${message}`,
       )
     }
-    await saveQueue(pp)
+    await persistQueue(pp)
+  } finally {
+    if (currentAbortController === controller) {
+      currentAbortController = null
+    }
   }
-
-  processing = false
-  processNext(projectId)
 }

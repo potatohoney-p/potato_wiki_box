@@ -3,6 +3,7 @@ import type { WebSearchResult } from "@/lib/web-search"
 
 export interface ResearchTask {
   id: string
+  reviewId?: string
   topic: string
   searchQueries?: string[]
   status: "queued" | "searching" | "synthesizing" | "saving" | "done" | "error"
@@ -18,28 +19,28 @@ interface ResearchState {
   panelOpen: boolean
   maxConcurrent: number
 
-  addTask: (topic: string) => string
+  addTask: (topic: string, reviewId?: string) => string
   updateTask: (id: string, updates: Partial<ResearchTask>) => void
   removeTask: (id: string) => void
+  setTasks: (tasks: ResearchTask[]) => void
   setPanelOpen: (open: boolean) => void
   getRunningCount: () => number
   getNextQueued: () => ResearchTask | undefined
 }
-
-let counter = 0
 
 export const useResearchStore = create<ResearchState>((set, get) => ({
   tasks: [],
   panelOpen: false,
   maxConcurrent: 3,
 
-  addTask: (topic) => {
-    const id = `research-${++counter}`
+  addTask: (topic, reviewId) => {
+    const id = `research-${crypto.randomUUID()}`
     set((state) => ({
       tasks: [
         ...state.tasks,
         {
           id,
+          ...(reviewId ? { reviewId } : {}),
           topic,
           status: "queued",
           webResults: [],
@@ -63,6 +64,8 @@ export const useResearchStore = create<ResearchState>((set, get) => ({
     set((state) => ({
       tasks: state.tasks.filter((t) => t.id !== id),
     })),
+
+  setTasks: (tasks) => set({ tasks }),
 
   setPanelOpen: (panelOpen) => set({ panelOpen }),
 

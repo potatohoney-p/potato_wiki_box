@@ -146,7 +146,7 @@ pub async fn search_project_inner(
     };
     let query_phrase = trim_query_punctuation(&query.to_lowercase());
     let mut results = Vec::new();
-    let mut page_paths_by_stem = BTreeMap::new();
+    let mut page_paths_by_id = BTreeMap::new();
 
     let wiki_root = Path::new(&project_path).join("wiki");
     if wiki_root.exists() {
@@ -168,18 +168,8 @@ pub async fn search_project_inner(
                 Ok(content) => content,
                 Err(_) => continue,
             };
-            if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-                let previous = page_paths_by_stem.insert(
-                    stem.to_string(),
-                    relative_to_project(&project_path, entry.path()),
-                );
-                if let Some(previous) = previous {
-                    eprintln!(
-                        "[Search] duplicate wiki page stem '{stem}': '{previous}' and '{}' share one vector page_id",
-                        relative_to_project(&project_path, entry.path())
-                    );
-                }
-            }
+            let relative_path = relative_to_project(&project_path, entry.path());
+            page_paths_by_id.insert(vector_page_id_from_relative(&relative_path), relative_path);
             if let Some(hit) = score_file(
                 &project_path,
                 entry.path(),
@@ -222,7 +212,7 @@ pub async fn search_project_inner(
                     }
                     materialize_vector_only_results(
                         &vector_results,
-                        &page_paths_by_stem,
+                        &page_paths_by_id,
                         &project_path,
                         &mut results,
                         include_content,
@@ -279,7 +269,8 @@ fn apply_rrf_scores(
 ) {
     for result in results {
         let token = token_rank.get(&normalize_path(&result.path)).copied();
-        let vector = vector_rank.get(&file_stem(&result.path)).copied();
+        let page_id = vector_page_id_from_relative(&result.path);
+        let vector = vector_rank.get(&page_id).copied();
         let mut rrf = 0.0;
         if let Some(rank) = token {
             rrf += 1.0 / (RRF_K + rank as f64);
@@ -287,7 +278,7 @@ fn apply_rrf_scores(
         if let Some(rank) = vector {
             rrf += 1.0 / (RRF_K + rank as f64);
         }
-        if let Some(score) = vector_score.get(&file_stem(&result.path)).copied() {
+        if let Some(score) = vector_score.get(&page_id).copied() {
             result.vector_score = Some(score);
         }
         result.score = rrf;
@@ -366,17 +357,20 @@ async fn search_by_embedding(
 
 fn materialize_vector_only_results(
     vector_results: &[PageVectorResult],
-    page_paths_by_stem: &BTreeMap<String, String>,
+    page_paths_by_id: &BTreeMap<String, String>,
     project_path: &str,
     results: &mut Vec<ProjectSearchResult>,
     include_content: bool,
 ) {
-    let mut known: BTreeSet<String> = results.iter().map(|r| file_stem(&r.path)).collect();
+    let mut known: BTreeSet<String> = results
+        .iter()
+        .map(|result| vector_page_id_from_relative(&result.path))
+        .collect();
     for vr in vector_results {
         if known.contains(&vr.id) {
             continue;
         }
-        if let Some(rel) = page_paths_by_stem.get(&vr.id) {
+        if let Some(rel) = page_paths_by_id.get(&vr.id) {
             let path = Path::new(project_path).join(rel);
             let Ok(content) = fs::read_to_string(&path) else {
                 continue;
@@ -1008,12 +1002,14 @@ fn relative_to_project(project_path: &str, path: &Path) -> String {
         .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"))
 }
 
-fn file_stem(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string()
+fn vector_page_id_from_relative(path: &str) -> String {
+    let normalized = normalize_path(path);
+    let relative = normalized
+        .trim_start_matches('/')
+        .strip_prefix("wiki/")
+        .unwrap_or(normalized.trim_start_matches('/'))
+        .trim_end_matches(".md");
+    relative.replace('%', "%25").replace('/', "%2F")
 }
 
 #[cfg(test)]
@@ -1025,10 +1021,26 @@ mod tests {
     fn tmp_project() -> PathBuf {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let id = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!("llm-wiki-search-test-{id}"));
+        let path = std::env::temp_dir().join(format!("potato-box-search-test-{id}"));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(path.join("wiki/concepts")).unwrap();
         path
+    }
+
+    #[test]
+    fn vector_page_ids_preserve_relative_wiki_identity() {
+        assert_eq!(
+            vector_page_id_from_relative("wiki/concepts/foo.md"),
+            "concepts%2Ffoo"
+        );
+        assert_eq!(
+            vector_page_id_from_relative("wiki/entities/foo.md"),
+            "entities%2Ffoo"
+        );
+        assert_eq!(
+            vector_page_id_from_relative("wiki/concepts%2Ffoo.md"),
+            "concepts%252Ffoo"
+        );
     }
 
     fn write_page(root: &Path, rel: &str, content: &str) {
@@ -1259,9 +1271,14 @@ mod tests {
             ("wiki/concepts/both.md".to_string(), 1),
             ("wiki/concepts/token-only.md".to_string(), 2),
         ]);
-        let vector_rank = BTreeMap::from([("both".to_string(), 1), ("vector-only".to_string(), 2)]);
-        let vector_score =
-            BTreeMap::from([("both".to_string(), 0.95), ("vector-only".to_string(), 0.8)]);
+        let vector_rank = BTreeMap::from([
+            ("concepts%2Fboth".to_string(), 1),
+            ("concepts%2Fvector-only".to_string(), 2),
+        ]);
+        let vector_score = BTreeMap::from([
+            ("concepts%2Fboth".to_string(), 0.95),
+            ("concepts%2Fvector-only".to_string(), 0.8),
+        ]);
 
         apply_rrf_scores(&mut results, &token_rank, &vector_rank, &vector_score);
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());

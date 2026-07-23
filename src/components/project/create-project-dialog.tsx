@@ -1,13 +1,12 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { open } from "@tauri-apps/plugin-dialog"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { FolderOpen } from "lucide-react"
+import { FolderOpen, LoaderCircle } from "lucide-react"
 import { createProject, writeFile, createDirectory } from "@/commands/fs"
 import { getTemplate } from "@/lib/templates"
 import { TemplatePicker } from "@/components/project/template-picker"
@@ -16,6 +15,7 @@ import { normalizePath } from "@/lib/path-utils"
 import { OUTPUT_LANGUAGE_OPTIONS } from "@/lib/output-language-options"
 import { useWikiStore, type OutputLanguage } from "@/stores/wiki-store"
 import { saveOutputLanguage } from "@/lib/project-store"
+import { isDesktopRuntimeUnavailable, selectDirectory } from "@/lib/native-dialog"
 
 interface CreateProjectDialogProps {
   open: boolean
@@ -60,8 +60,11 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
   const [error, setError] = useState("")
   const [hasInteracted, setHasInteracted] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
   const setOutputLanguage = useWikiStore((s) => s.setOutputLanguage)
   const formStatus = getCreateProjectFormStatus(name, path, language, error, hasInteracted)
+  const footerMessage = formStatus.footerError
+    || (formStatus.footerMessageKey ? t(formStatus.footerMessageKey) : "")
 
   function markEdited() {
     setHasInteracted(true)
@@ -75,6 +78,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
     setLanguage("")
     setError("")
     setHasInteracted(false)
+    setBrowsing(false)
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -85,14 +89,22 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
   }
 
   async function handleBrowse() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: t("project.browse"),
-    })
-    if (selected) {
-      markEdited()
-      setPath(selected)
+    if (browsing) return
+    markEdited()
+    setBrowsing(true)
+    try {
+      const selected = await selectDirectory({ title: t("project.browse") })
+      if (selected) setPath(selected)
+    } catch (err) {
+      setError(
+        isDesktopRuntimeUnavailable(err)
+          ? t("nativeRuntime.desktopRequired")
+          : t("nativeRuntime.directoryPickerFailed", {
+              error: err instanceof Error ? err.message : String(err),
+            }),
+      )
+    } finally {
+      setBrowsing(false)
     }
   }
 
@@ -141,11 +153,11 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-h-[min(90vh,48rem)] sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="px-6 pt-6">{t("project.createTitle")}</DialogTitle>
+          <DialogTitle className="px-5 pt-5 sm:px-6 sm:pt-6">{t("project.createTitle")}</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col gap-4 overflow-y-auto min-h-0 px-6 py-4">
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-5 py-4 sm:px-6">
           <div className="flex flex-col gap-2">
             <Label htmlFor="name">
               {t("project.name")} <span className="text-destructive">{t("project.requiredMarker")}</span>
@@ -158,6 +170,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
                 setName(e.target.value)
               }}
               placeholder={t("project.namePlaceholder")}
+              className="max-sm:h-11"
             />
           </div>
           <div className="flex flex-col gap-2">
@@ -171,7 +184,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
                 markEdited()
                 setLanguage(e.target.value)
               }}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring max-sm:min-h-11"
             >
               <option value="" disabled>
                 {t("project.pickLanguage")}
@@ -209,10 +222,12 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
                   setPath(e.target.value)
                 }}
                 placeholder={t("project.parentDirPlaceholder")}
-                className="flex-1"
+                className="flex-1 max-sm:h-11"
               />
-              <Button variant="outline" size="icon" onClick={handleBrowse} type="button">
-                <FolderOpen className="h-4 w-4" />
+              <Button variant="outline" size="icon" onClick={handleBrowse} type="button" disabled={browsing} aria-busy={browsing} className="max-sm:size-11" title={t("project.browse")} aria-label={t("project.browse")}>
+                {browsing
+                  ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                  : <FolderOpen className="h-4 w-4" />}
               </Button>
             </div>
           </div>
@@ -221,12 +236,14 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
             <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
           </div>
         </div>
-        <DialogFooter className="mx-0 mb-0 flex-col border-t bg-background/95 px-6 py-4 sm:flex-row sm:items-center">
-          <div className="min-h-5 flex-1 text-left text-sm text-destructive">
-            {formStatus.footerError || (formStatus.footerMessageKey ? t(formStatus.footerMessageKey) : "")}
-          </div>
-          <Button variant="outline" onClick={() => handleOpenChange(false)}>{t("project.cancel")}</Button>
-          <Button onClick={handleCreate} disabled={creating || !formStatus.canCreate}>{creating ? t("project.creating") : t("project.create")}</Button>
+        <DialogFooter className="mx-0 mb-0 flex-col border-t bg-background px-6 py-4 sm:flex-row sm:items-center">
+          {footerMessage && (
+            <div className="flex-1 text-left text-sm text-destructive" role="alert">
+              {footerMessage}
+            </div>
+          )}
+          <Button variant="outline" onClick={() => handleOpenChange(false)} className="max-sm:min-h-11">{t("project.cancel")}</Button>
+          <Button onClick={handleCreate} disabled={creating || !formStatus.canCreate} className="max-sm:min-h-11">{creating ? t("project.creating") : t("project.create")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

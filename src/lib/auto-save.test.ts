@@ -12,13 +12,14 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest"
 
-const { saveReviewItems, saveLintItems, saveChatHistory } = vi.hoisted(() => ({
+const { saveReviewItems, saveLintItems, saveChatHistory, saveResearchTasks } = vi.hoisted(() => ({
   saveReviewItems: vi.fn().mockResolvedValue(undefined),
   saveLintItems: vi.fn().mockResolvedValue(undefined),
   saveChatHistory: vi.fn().mockResolvedValue(undefined),
+  saveResearchTasks: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock("./persist", () => ({ saveReviewItems, saveLintItems, saveChatHistory }))
+vi.mock("./persist", () => ({ saveReviewItems, saveLintItems, saveChatHistory, saveResearchTasks }))
 
 import {
   setupAutoSave,
@@ -46,6 +47,7 @@ beforeEach(() => {
   saveReviewItems.mockClear()
   saveLintItems.mockClear()
   saveChatHistory.mockClear()
+  saveResearchTasks.mockClear()
   useReviewStore.setState({ items: [] })
   useLintStore.setState({ items: [] })
   useChatStore.setState({ conversations: [], messages: [], isStreaming: false })
@@ -129,13 +131,25 @@ describe("auto-save project-switch guard", () => {
     expect(saveChatHistory).not.toHaveBeenCalled()
   })
 
-  it("skips chat flush while streaming", async () => {
+  it("persists completed chat messages while a response is streaming", async () => {
     setProjectPath("/proj/A")
     useChatStore.setState({ isStreaming: true })
 
     await flushAndSuspendAutoSave()
 
-    expect(saveChatHistory).not.toHaveBeenCalled()
+    expect(saveChatHistory).toHaveBeenCalledWith("/proj/A", [], [])
     expect(saveReviewItems).toHaveBeenCalled()
+  })
+
+  it("blocks the switch and resumes auto-save when the durability barrier fails", async () => {
+    setProjectPath("/proj/A")
+    saveReviewItems.mockRejectedValueOnce(new Error("disk full"))
+
+    await expect(flushAndSuspendAutoSave()).rejects.toThrow("disk full")
+
+    saveReviewItems.mockClear()
+    useReviewStore.setState({ items: [review("retryable")] })
+    vi.runAllTimers()
+    expect(saveReviewItems).toHaveBeenCalledWith("/proj/A", [review("retryable")])
   })
 })

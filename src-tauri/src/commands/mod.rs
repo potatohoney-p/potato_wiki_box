@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod claude_cli;
 mod cli_resolver;
 pub mod codex_cli;

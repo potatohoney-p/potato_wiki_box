@@ -1,32 +1,39 @@
 {
-  "name": "llm-wiki-mcp-server",
+  "name": "potato-box-mcp-server",
   "version": "0.4.24",
-  "description": "MCP server for LLM Wiki local API",
+  "description": "MCP server for potato box local API",
   "type": "module",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "bin": {
-    "llm-wiki-mcp": "dist/src/index.js"
+    "potato-box-mcp": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/src/index.js",
-    "test": "npm run build && node --test dist/test/*.test.js"
+    "start": "node dist/index.js",
+    "smoke": "node scripts/smoke.mjs",
+    "test": "npm run build && npm run smoke && node --test dist/test/*.test.js"
   },
   "engines": {
     "node": ">=20"
   },
   "keywords": [
     "mcp",
-    "llm-wiki",
+    "potato-box",
     "knowledge-base"
   ],
-  "license": "MIT",
+  "license": "GPL-3.0-only",
+  "files": [
+    "dist/index.js",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.7.3"
   }
 }

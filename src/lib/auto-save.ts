@@ -2,16 +2,18 @@ import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { saveReviewItems, saveLintItems, saveChatHistory } from "./persist"
+import { useResearchStore } from "@/stores/research-store"
+import { saveReviewItems, saveLintItems, saveChatHistory, saveResearchTasks } from "./persist"
 
 let reviewTimer: ReturnType<typeof setTimeout> | null = null
 let lintTimer: ReturnType<typeof setTimeout> | null = null
 let chatTimer: ReturnType<typeof setTimeout> | null = null
+let researchTimer: ReturnType<typeof setTimeout> | null = null
 
 // While suspended, the store subscriptions skip writing. This is essential
 // during a project switch: resetProjectState() clears every store to empty,
 // and without this guard the debounced callbacks would persist those empty
-// arrays back to the OUTGOING project's .llm-wiki/*.json — wiping its pending
+// arrays back to the OUTGOING project's .potato-box/*.json — wiping its pending
 // review / deep-research items. The switch flow flushes real data to disk via
 // flushAndSuspendAutoSave() first, then resumes once the new project loads.
 let suspended = false
@@ -20,6 +22,7 @@ function clearTimers(): void {
   if (reviewTimer) { clearTimeout(reviewTimer); reviewTimer = null }
   if (lintTimer) { clearTimeout(lintTimer); lintTimer = null }
   if (chatTimer) { clearTimeout(chatTimer); chatTimer = null }
+  if (researchTimer) { clearTimeout(researchTimer); researchTimer = null }
 }
 
 /**
@@ -35,13 +38,23 @@ export async function flushAndSuspendAutoSave(): Promise<void> {
   const review = useReviewStore.getState().items
   const lint = useLintStore.getState().items
   const chat = useChatStore.getState()
-  await Promise.allSettled([
-    saveReviewItems(projectPath, review),
-    saveLintItems(projectPath, lint),
-    chat.isStreaming
-      ? Promise.resolve()
-      : saveChatHistory(projectPath, chat.conversations, chat.messages),
-  ])
+  try {
+    await Promise.all([
+      saveReviewItems(projectPath, review),
+      saveLintItems(projectPath, lint),
+      // The partial assistant stream is not part of `messages`, but the user
+      // turn that started it is. Persist completed messages even while a
+      // response is streaming so a rapid project switch cannot lose that turn.
+      saveChatHistory(projectPath, chat.conversations, chat.messages),
+      saveResearchTasks(projectPath, useResearchStore.getState().tasks),
+    ])
+  } catch (error) {
+    // The caller must stay on the current project when the durability barrier
+    // fails. Resume normal auto-save so the user can retry after fixing disk
+    // permissions or free-space problems.
+    suspended = false
+    throw error
+  }
 }
 
 export function resumeAutoSave(): void {
@@ -55,14 +68,14 @@ export function resumeAutoSave(): void {
  */
 export async function runWithSuspendedAutoSave<T>(
   action: () => Promise<T>,
-  onFailure?: () => void,
+  onFailure?: () => void | Promise<void>,
 ): Promise<T> {
   await flushAndSuspendAutoSave()
   try {
     return await action()
   } catch (err) {
     try {
-      onFailure?.()
+      await onFailure?.()
     } catch (cleanupErr) {
       console.warn("Failed to clean up after suspended auto-save operation:", cleanupErr)
     }
@@ -108,5 +121,16 @@ export function setupAutoSave(): void {
         saveChatHistory(projectPath, state.conversations, state.messages).catch(() => {})
       }
     }, 2000)
+  })
+
+  useResearchStore.subscribe((state) => {
+    if (suspended) return
+    const projectPath = useWikiStore.getState().project?.path
+    if (researchTimer) clearTimeout(researchTimer)
+    researchTimer = setTimeout(() => {
+      if (projectPath) {
+        saveResearchTasks(projectPath, state.tasks).catch(() => {})
+      }
+    }, 1000)
   })
 }

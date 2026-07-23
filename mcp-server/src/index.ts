@@ -8,7 +8,7 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js"
 import {
-  LlmWikiApiClient,
+  PotatoBoxApiClient,
   type ApiFileNode,
   type ApiGraphNode,
   type ApiReviewItem,
@@ -20,18 +20,18 @@ import { VERSION } from "./version.js"
 const DEFAULT_PROJECT_ID = "current"
 const MAX_TEXT_BYTES = 120_000
 
-const client = new LlmWikiApiClient()
+const client = new PotatoBoxApiClient()
 
 const server = new Server(
-  { name: "llm-wiki", version: VERSION },
+  { name: "potato-box", version: VERSION },
   { capabilities: { tools: {} } },
 )
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
-      name: "llm_wiki_status",
-      description: "Check whether the LLM Wiki desktop local API is reachable and list the current project.",
+      name: "potato_box_status",
+      description: "Check whether the potato box desktop local API is reachable and list the current project.",
       inputSchema: {
         type: "object",
         properties: {},
@@ -39,8 +39,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: "llm_wiki_projects",
-      description: "List known LLM Wiki projects. The response includes currentProject when the desktop app has an active project.",
+      name: "potato_box_projects",
+      description: "List known potato box projects. The response includes currentProject when the desktop app has an active project.",
       inputSchema: {
         type: "object",
         properties: {},
@@ -48,26 +48,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: "llm_wiki_files",
-      description: "List files from a project using the desktop app's API permissions. project_id may be a UUID, filesystem path, or 'current'.",
+      name: "potato_box_files",
+      description: "List files from a project using the desktop app's API permissions. project_id may be a project UUID or 'current'.",
       inputSchema: {
         type: "object",
         properties: {
-          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          project_id: { type: "string", description: "Project UUID or 'current'. Defaults to current." },
           root: { type: "string", enum: ["wiki", "sources", "all"], description: "Tree root to list. Defaults to wiki." },
           recursive: { type: "boolean", description: "Whether to list recursively. Defaults to true." },
-          max_files: { type: "number", description: "Maximum files returned by the local API. Max 10000." },
+          max_files: { type: "number", minimum: 1, maximum: 10000, description: "Maximum files returned by the local API. Max 10000." },
         },
         additionalProperties: false,
       },
     },
     {
-      name: "llm_wiki_read_file",
+      name: "potato_box_read_file",
       description: "Read a text file from a project through the desktop app API. Only public project paths such as wiki/ and raw/sources/ are allowed by the API.",
       inputSchema: {
         type: "object",
         properties: {
-          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          project_id: { type: "string", description: "Project UUID or 'current'. Defaults to current." },
           path: { type: "string", description: "Project-relative file path, for example wiki/index.md." },
         },
         required: ["path"],
@@ -75,28 +75,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: "llm_wiki_reviews",
+      name: "potato_box_reviews",
       description: "List Review tab items from a project. Defaults to unresolved items so agent clients can help manage pending wiki review work.",
       inputSchema: {
         type: "object",
         properties: {
-          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          project_id: { type: "string", description: "Project UUID or 'current'. Defaults to current." },
           status: { type: "string", enum: ["unresolved", "resolved", "all"], description: "Review status filter. Defaults to unresolved." },
           type: { type: "string", description: "Optional Review item type filter, for example missing-page, duplicate, contradiction, confirm, or suggestion." },
-          limit: { type: "number", description: "Maximum review items returned. The local API clamps to its configured maximum." },
+          limit: { type: "number", minimum: 1, maximum: 1000, description: "Maximum review items returned. Max 1000." },
         },
         additionalProperties: false,
       },
     },
     {
-      name: "llm_wiki_search",
+      name: "potato_box_search",
       description: "Search a project using the same backend keyword/vector retrieval used by the desktop API.",
       inputSchema: {
         type: "object",
         properties: {
-          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          project_id: { type: "string", description: "Project UUID or 'current'. Defaults to current." },
           query: { type: "string", description: "Search query." },
-          top_k: { type: "number", description: "Maximum results. The local API clamps to its configured maximum." },
+          top_k: { type: "number", minimum: 1, maximum: 50, description: "Maximum results. Max 50." },
           include_content: { type: "boolean", description: "Include full page content in results when supported by the API." },
         },
         required: ["query"],
@@ -104,26 +104,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: "llm_wiki_graph",
+      name: "potato_box_graph",
       description: "Query the project knowledge graph through the desktop app API.",
       inputSchema: {
         type: "object",
         properties: {
-          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          project_id: { type: "string", description: "Project UUID or 'current'. Defaults to current." },
           q: { type: "string", description: "Optional text filter." },
           node_type: { type: "string", description: "Optional node type filter." },
-          limit: { type: "number", description: "Maximum nodes. The local API clamps to its configured maximum." },
+          limit: { type: "number", minimum: 1, maximum: 1000, description: "Maximum nodes. Max 1000." },
         },
         additionalProperties: false,
       },
     },
     {
-      name: "llm_wiki_rescan_sources",
+      name: "potato_box_rescan_sources",
       description: "Trigger the desktop app's source folder rescan for a project, using the user's Source Watch rules.",
       inputSchema: {
         type: "object",
         properties: {
-          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          project_id: { type: "string", description: "Project UUID or 'current'. Defaults to current." },
         },
         additionalProperties: false,
       },
@@ -135,18 +135,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const args = asObject(request.params.arguments ?? {})
   try {
     switch (request.params.name) {
-      case "llm_wiki_status": {
-        const [health, projects] = await Promise.all([
-          client.health(),
-          client.projects().catch(() => ({ projects: [], currentProject: null })),
-        ])
+      case "potato_box_status": {
+        const health = await client.health()
+        if (health.mcpEnabled !== true) {
+          return textResult(JSON.stringify(health, null, 2))
+        }
+        const projects = await client.projects().catch(() => ({ projects: [], currentProject: null }))
         return textResult(JSON.stringify({ ...health, ...projects }, null, 2))
       }
-      case "llm_wiki_projects": {
+      case "potato_box_projects": {
         await assertMcpEnabled()
         return textResult(JSON.stringify(await client.projects(), null, 2))
       }
-      case "llm_wiki_files": {
+      case "potato_box_files": {
         await assertMcpEnabled()
         const response = await client.files(projectId(args), {
           root: enumArg(args.root, ["wiki", "sources", "all"] as const, "wiki"),
@@ -155,13 +156,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         })
         return textResult(formatFileTree(response.files, response.truncated))
       }
-      case "llm_wiki_read_file": {
+      case "potato_box_read_file": {
         await assertMcpEnabled()
         const relPath = stringArg(args.path, "path")
         const { path, content } = await client.fileContent(projectId(args), relPath)
         return textResult(`# ${path}\n\n${truncateText(content, MAX_TEXT_BYTES)}`)
       }
-      case "llm_wiki_reviews": {
+      case "potato_box_reviews": {
         await assertMcpEnabled()
         const reviews = await client.reviews(projectId(args), {
           status: enumArg(args.status, ["unresolved", "resolved", "all"] as const, "unresolved"),
@@ -170,7 +171,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         })
         return textResult(formatReviews(reviews))
       }
-      case "llm_wiki_search": {
+      case "potato_box_search": {
         await assertMcpEnabled()
         const query = stringArg(args.query, "query")
         const search = await client.search(projectId(args), query, {
@@ -179,7 +180,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         })
         return textResult(formatSearchResults(query, search))
       }
-      case "llm_wiki_graph": {
+      case "potato_box_graph": {
         await assertMcpEnabled()
         const graph = await client.graph(projectId(args), {
           q: optionalStringArg(args.q),
@@ -188,7 +189,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         })
         return textResult(formatGraph(graph.nodes, graph.edges))
       }
-      case "llm_wiki_rescan_sources": {
+      case "potato_box_rescan_sources": {
         await assertMcpEnabled()
         return textResult(JSON.stringify(await client.rescan(projectId(args)), null, 2))
       }
@@ -206,10 +207,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 async function assertMcpEnabled(): Promise<void> {
   const health = await client.health()
-  if (health.mcpEnabled === false) {
+  if (health.mcpEnabled !== true) {
     throw new McpError(
       ErrorCode.InvalidRequest,
-      "LLM Wiki MCP access is disabled. Enable Settings -> API + MCP -> Enable MCP access in the desktop app.",
+      "potato box MCP access is disabled. Enable Settings -> API + MCP -> Enable MCP access in the desktop app.",
     )
   }
 }
@@ -269,7 +270,7 @@ function truncateText(value: string, maxBytes: number): string {
 function formatFileTree(files: ApiFileNode[], truncated = false): string {
   if (files.length === 0) return "No files found."
   const lines: string[] = truncated
-    ? ["[warning] File tree was truncated by the LLM Wiki API maxFiles limit.", ""]
+    ? ["[warning] File tree was truncated by the potato box API maxFiles limit.", ""]
     : []
   const walk = (nodes: ApiFileNode[], depth: number) => {
     for (const node of nodes) {
@@ -368,10 +369,10 @@ function formatGraph(nodes: ApiGraphNode[], edges: Array<{ source: string; targe
 async function main(): Promise<void> {
   const transport = new StdioServerTransport()
   await server.connect(transport)
-  console.error(`LLM Wiki MCP server v${VERSION} connected to ${process.env.LLM_WIKI_API_BASE_URL ?? "http://127.0.0.1:19828"}`)
+  console.error(`potato box MCP server v${VERSION} connected to ${process.env.POTATO_BOX_API_BASE_URL ?? "http://127.0.0.1:19828"}`)
 }
 
 main().catch((err) => {
-  console.error("Failed to start LLM Wiki MCP server:", err)
+  console.error("Failed to start potato box MCP server:", err)
   process.exit(1)
 })

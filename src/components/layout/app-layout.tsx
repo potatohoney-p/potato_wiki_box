@@ -11,6 +11,7 @@ import { ActivityPanel } from "./activity-panel"
 import { useResearchStore } from "@/stores/research-store"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { getAppLayoutVisibility } from "./app-layout-visibility"
+import { PanelLeftOpen, PanelRightOpen, X } from "lucide-react"
 
 interface AppLayoutProps {
   onSwitchProject: () => void
@@ -23,14 +24,24 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const [leftWidth, setLeftWidth] = useState(220)
   const [rightWidth, setRightWidth] = useState(400)
+  const [isCompact, setIsCompact] = useState(false)
+  const [compactLeftOpen, setCompactLeftOpen] = useState(false)
+  const [compactRightOpen, setCompactRightOpen] = useState(false)
   const isDraggingLeft = useRef(false)
   const isDraggingRight = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const loadFileTree = useCallback(async () => {
     if (!project) return
+    const projectId = project.id
+    const projectPath = normalizePath(project.path)
     try {
-      const tree = await listDirectory(normalizePath(project.path))
+      const tree = await listDirectory(projectPath)
+      const activeProject = useWikiStore.getState().project
+      if (
+        activeProject?.id !== projectId ||
+        normalizePath(activeProject.path) !== projectPath
+      ) return
       setFileTree(tree)
     } catch (err) {
       console.error("Failed to load file tree:", err)
@@ -40,6 +51,20 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   useEffect(() => {
     loadFileTree()
   }, [loadFileTree])
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return
+    const query = window.matchMedia("(max-width: 767px)")
+    const update = () => setIsCompact(query.matches)
+    update()
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [])
+
+  useEffect(() => {
+    setCompactLeftOpen(false)
+    setCompactRightOpen(false)
+  }, [activeView])
 
   const startDrag = useCallback(
     (side: "left" | "right") => (e: React.MouseEvent) => {
@@ -98,22 +123,77 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
       <div className="flex min-h-0 flex-1">
         <IconSidebar onSwitchProject={onSwitchProject} />
         <div ref={containerRef} className="relative flex min-w-0 flex-1 overflow-hidden">
-          {showLeftPanel && (
+          {isCompact && (compactLeftOpen || compactRightOpen) && (
+            <button
+              type="button"
+              aria-label="Close side panel"
+              className="absolute inset-0 z-20 bg-black/35"
+              onClick={() => {
+                setCompactLeftOpen(false)
+                setCompactRightOpen(false)
+              }}
+            />
+          )}
+          {isCompact && showLeftPanel && !compactLeftOpen && (
+            <button
+              type="button"
+              title="Open project files"
+              aria-label="Open project files"
+              className="absolute left-2 top-2 z-10 flex size-9 items-center justify-center rounded-md border bg-background shadow-sm"
+              onClick={() => {
+                setCompactRightOpen(false)
+                setCompactLeftOpen(true)
+              }}
+            >
+              <PanelLeftOpen className="size-4" />
+            </button>
+          )}
+          {isCompact && hasRightPanel && !compactRightOpen && (
+            <button
+              type="button"
+              title="Open research panel"
+              aria-label="Open research panel"
+              className="absolute right-2 top-2 z-10 flex size-9 items-center justify-center rounded-md border bg-background shadow-sm"
+              onClick={() => {
+                setCompactLeftOpen(false)
+                setCompactRightOpen(true)
+              }}
+            >
+              <PanelRightOpen className="size-4" />
+            </button>
+          )}
+
+          {showLeftPanel && (!isCompact || compactLeftOpen) && (
             <>
               {/* Left: File tree + Activity */}
               <div
-                className="flex shrink-0 flex-col overflow-hidden border-r"
-                style={{ width: leftWidth }}
+                className={isCompact
+                  ? "absolute inset-y-0 left-0 z-30 flex w-[min(85vw,320px)] flex-col overflow-hidden border-r bg-background shadow-xl"
+                  : "flex shrink-0 flex-col overflow-hidden border-r"}
+                style={isCompact ? undefined : { width: leftWidth }}
               >
+                {isCompact && (
+                  <button
+                    type="button"
+                    title="Close project files"
+                    aria-label="Close project files"
+                    className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-md border bg-background"
+                    onClick={() => setCompactLeftOpen(false)}
+                  >
+                    <X className="size-4" />
+                  </button>
+                )}
                 <div className="flex-1 overflow-hidden">
                   <SidebarPanel />
                 </div>
                 <ActivityPanel />
               </div>
-              <div
-                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-                onMouseDown={startDrag("left")}
-              />
+              {!isCompact && (
+                <div
+                  className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
+                  onMouseDown={startDrag("left")}
+                />
+              )}
             </>
           )}
 
@@ -125,16 +205,31 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
           </div>
 
           {/* Right panels */}
-          {hasRightPanel && (
+          {hasRightPanel && (!isCompact || compactRightOpen) && (
             <>
+              {!isCompact && (
+                <div
+                  className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
+                  onMouseDown={startDrag("right")}
+                />
+              )}
               <div
-                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-                onMouseDown={startDrag("right")}
-              />
-              <div
-                className="flex shrink-0 flex-col overflow-hidden border-l"
-                style={{ width: rightWidth }}
+                className={isCompact
+                  ? "absolute inset-y-0 right-0 z-30 flex w-[min(92vw,400px)] flex-col overflow-hidden border-l bg-background shadow-xl"
+                  : "flex shrink-0 flex-col overflow-hidden border-l"}
+                style={isCompact ? undefined : { width: rightWidth }}
               >
+                {isCompact && (
+                  <button
+                    type="button"
+                    title="Close research panel"
+                    aria-label="Close research panel"
+                    className="absolute left-2 top-2 z-10 flex size-8 items-center justify-center rounded-md border bg-background"
+                    onClick={() => setCompactRightOpen(false)}
+                  >
+                    <X className="size-4" />
+                  </button>
+                )}
                 <ErrorBoundary>
                   <ResearchPanel />
                 </ErrorBoundary>

@@ -3,15 +3,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 // Mock fs so the tests don't touch real disk.
 vi.mock("@/commands/fs", () => ({
   readFile: vi.fn(),
-  writeFile: vi.fn(),
+  writeFileAtomic: vi.fn(),
   fileExists: vi.fn(),
 }))
 
 import { checkIngestCache, saveIngestCache } from "./ingest-cache"
-import { readFile, writeFile, fileExists } from "@/commands/fs"
+import { readFile, writeFileAtomic, fileExists } from "@/commands/fs"
 
 const mockReadFile = vi.mocked(readFile)
-const mockWriteFile = vi.mocked(writeFile)
+const mockWriteFile = vi.mocked(writeFileAtomic)
 const mockFileExists = vi.mocked(fileExists)
 
 beforeEach(() => {
@@ -26,6 +26,15 @@ describe("ingest-cache — checkIngestCache", () => {
     mockReadFile.mockResolvedValue(JSON.stringify({ entries: {} }))
     const result = await checkIngestCache("/project", "foo.pdf", "content")
     expect(result).toBeNull()
+  })
+
+  it("invalidates legacy entries that were not committed as complete", async () => {
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      entries: {
+        "foo.pdf": { hash: "old", timestamp: 1, filesWritten: ["wiki/sources/foo.md"] },
+      },
+    }))
+    await expect(checkIngestCache("/project", "foo.pdf", "content")).resolves.toBeNull()
   })
 
   it("returns cached filesWritten when hash matches AND all files exist", async () => {
@@ -92,5 +101,15 @@ describe("ingest-cache — checkIngestCache", () => {
 
     const result = await checkIngestCache("/project", "foo.pdf", "hello")
     expect(result).toBeNull()
+  })
+})
+
+describe("ingest-cache — commit", () => {
+  it("rejects zero-output results", async () => {
+    mockReadFile.mockRejectedValue(new Error("ENOENT"))
+    await expect(saveIngestCache("/project", "foo.pdf", "content", [])).rejects.toThrow(
+      "no output files",
+    )
+    expect(mockWriteFile).not.toHaveBeenCalled()
   })
 })

@@ -9,16 +9,18 @@ import {
   MessageSquare,
   X,
   Check,
+  Search,
   Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
-import { normalizePath } from "@/lib/path-utils"
+import { writeFile, readFile, listDirectory, deleteManagedReviewFile } from "@/commands/fs"
+import { getRelativePath, isAbsolutePath, isPathWithinBase, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
-import { makeQueryFileName } from "@/lib/wiki-filename"
+import { deriveQueryTitle, makeQueryFileName } from "@/lib/wiki-filename"
 import { useTranslation } from "react-i18next"
+import { parseReviewAction } from "@/lib/review-actions"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -40,8 +42,9 @@ export function ReviewView() {
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
     const item = items.find((i) => i.id === id)
-    // Deep Research — must be checked FIRST before any fuzzy matching
-    if (action === "__deep_research__" && project) {
+    const parsedAction = parseReviewAction(action)
+
+    if (parsedAction.kind === "research" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
       if (!hasConfiguredDeepResearchSources(searchConfig)) {
         window.alert(t("research.notConfigured"))
@@ -49,20 +52,20 @@ export function ReviewView() {
       }
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
-        // Use pre-generated search queries if available, otherwise fall back to title
-        const topic = item.title.replace(/^(Save to Wiki|Create|Research)[:\s]*/i, "").trim() || item.description.split("\n")[0]
-        queueResearch(pp, topic, llmConfig, searchConfig, item.searchQueries)
-        resolveItem(id, "Queued for research")
+        const topic = parsedAction.topic
+          || item.title.replace(/^(Save to Wiki|Create|Research)[:\s]*/i, "").trim()
+          || item.description.split("\n")[0]
+        queueResearch(pp, topic, llmConfig, searchConfig, item.searchQueries, id)
       } else {
         resolveItem(id, action)
       }
       return
     }
 
-    if (action.startsWith("save:") && project) {
+    if (parsedAction.kind === "save" && project) {
       // Decode and save the content to wiki
       try {
-        const encoded = action.slice(5)
+        const encoded = parsedAction.payload
         const content = decodeURIComponent(atob(encoded))
 
         // Strip hidden comments
@@ -71,8 +74,7 @@ export function ReviewView() {
           .replace(/<!--\s*sources:.*?-->/g, "")
           .trimEnd()
 
-        const firstLine = cleanContent.split("\n").find((l) => l.trim() && !l.startsWith("<!--"))?.replace(/^#+\s*/, "").trim() ?? "Saved Query"
-        const title = firstLine.slice(0, 60) || "Saved Query"
+        const title = deriveQueryTitle(cleanContent)
         const { date, fileName } = makeQueryFileName(title)
         const filePath = `${pp}/wiki/queries/${fileName}`
 
@@ -108,14 +110,12 @@ export function ReviewView() {
         resolveItem(id, "Saved to Wiki")
       } catch (err) {
         console.error("Failed to save to wiki from review:", err)
-        resolveItem(id, "Save failed")
+        window.alert(t("review.actionFailed", { defaultValue: "The review action failed. Nothing was marked resolved." }))
       }
-    } else if ((action.startsWith("open:") || actionLooksLikeOpen(action)) && project) {
+    } else if (parsedAction.kind === "open" && project) {
       // Open a page in the right-side preview without resolving the
       // review item. Viewing is not the same as accepting / fixing it.
-      const page = action.startsWith("open:")
-        ? action.slice(5)
-        : item?.affectedPages?.[0] ?? item?.sourcePath ?? ""
+      const page = parsedAction.path ?? item?.affectedPages?.[0] ?? item?.sourcePath ?? ""
       if (!page) return
       const normalizedPage = normalizePath(page)
       const candidates = normalizedPage.startsWith(pp)
@@ -123,7 +123,7 @@ export function ReviewView() {
         : normalizedPage.startsWith("wiki/") || normalizedPage.startsWith("raw/")
           ? [`${pp}/${normalizedPage}`, `${pp}/${normalizedPage}.md`]
           : [`${pp}/wiki/${normalizedPage}`, `${pp}/wiki/${normalizedPage}.md`]
-      for (const path of candidates) {
+      for (const path of candidates.filter((candidate) => isPathWithinBase(candidate, pp))) {
         try {
           const content = await readFile(path)
           useWikiStore.getState().openFileInPreview(path, content)
@@ -132,47 +132,37 @@ export function ReviewView() {
           // try next
         }
       }
-    } else if (action.startsWith("delete:") && project) {
-      // Delete a file
-      const filePath = action.slice(7)
+    } else if (parsedAction.kind === "delete" && project) {
+      const requestedPath = normalizePath(parsedAction.path)
+      const filePath = isAbsolutePath(requestedPath) ? requestedPath : `${pp}/${requestedPath.replace(/^\/+/, "")}`
+      const relativePath = getRelativePath(filePath, pp)
+      const allowedRoot = relativePath.startsWith("wiki/") || relativePath.startsWith("raw/sources/")
+      if (!isPathWithinBase(filePath, pp) || !allowedRoot) {
+        console.error("Rejected review delete outside managed project roots:", requestedPath)
+        window.alert(t("review.invalidDeleteTarget", { defaultValue: "This delete target is outside the managed project folders." }))
+        return
+      }
+      const confirmed = window.confirm(
+        t("review.deleteConfirm", {
+          path: relativePath,
+          defaultValue: `Delete ${relativePath}? This cannot be undone.`,
+        }),
+      )
+      if (!confirmed) return
       try {
-        await deleteFile(filePath)
+        await deleteManagedReviewFile(pp, filePath)
         const tree = await listDirectory(pp)
         setFileTree(tree)
         resolveItem(id, "Deleted")
       } catch (err) {
         console.error("Failed to delete:", err)
-        resolveItem(id, "Delete failed")
-      }
-    } else if (actionLooksLikeResearch(action) && project) {
-      // Actions with "research" trigger deep research, not just page creation
-      const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredDeepResearchSources(searchConfig)) {
-        // No research source — fall through to create a page instead
-        if (item) {
-          handleResolve(id, "__create_page__:" + action)
-        }
-        return
-      }
-      if (item) {
-        const llmConfig = useWikiStore.getState().llmConfig
-        const topic = action.replace(/^research\s*/i, "").trim() || item.description.split("\n")[0]
-        queueResearch(pp, topic, llmConfig, searchConfig)
-        resolveItem(id, "Queued for deep research")
-      } else {
-        resolveItem(id, action)
+        window.alert(t("review.actionFailed", { defaultValue: "The review action failed. Nothing was marked resolved." }))
       }
     } else if (
-      (action.startsWith("__create_page__:") || actionLooksLikeCreate(action))
+      parsedAction.kind === "create"
       && project
     ) {
-      // Create a wiki page from the review item's content. Accepts both
-      // the `__create_page__:` sentinel (forced via the "no search API"
-      // fallback branch above) and actions that heuristically look like
-      // a create instruction.
-      const realAction = action.startsWith("__create_page__:")
-        ? action.slice("__create_page__:".length)
-        : action
+      const realAction = parsedAction.label
       if (item) {
         try {
           const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
@@ -217,13 +207,16 @@ export function ReviewView() {
           resolveItem(id, `Created: wiki/${dir}/${fileName}`)
         } catch (err) {
           console.error("Failed to create page from review:", err)
-          resolveItem(id, "Create failed")
+          window.alert(t("review.actionFailed", { defaultValue: "The review action failed. Nothing was marked resolved." }))
         }
       } else {
         resolveItem(id, action)
       }
-    } else {
+    } else if (parsedAction.kind === "dismiss") {
       resolveItem(id, action)
+    } else {
+      console.error("Rejected unsupported review action:", action)
+      window.alert(t("review.unsupportedAction", { defaultValue: "This review action is not supported and was not executed." }))
     }
   }, [project, items, resolveItem, setFileTree])
 
@@ -310,8 +303,11 @@ function ReviewCard({
           <span className="font-medium">{item.title}</span>
         </div>
         <button
+          type="button"
           onClick={() => onDismiss(item.id)}
           className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted"
+          aria-label={t("review.dismiss", { defaultValue: "Dismiss review item" })}
+          title={t("review.dismiss", { defaultValue: "Dismiss review item" })}
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -334,13 +330,13 @@ function ReviewCard({
               className="h-7 text-xs gap-1"
               onClick={() => onResolve(item.id, "__deep_research__")}
             >
-              🔍 {t("research.title")}
+              <Search className="h-3.5 w-3.5" /> {t("research.title")}
             </Button>
           )}
           {item.options.map((opt) => (
             <Button
               key={opt.action}
-              variant="outline"
+              variant={parseReviewAction(opt.action).kind === "delete" ? "destructive" : "outline"}
               size="sm"
               className="h-7 text-xs"
               onClick={() => onResolve(item.id, opt.action)}
@@ -357,56 +353,6 @@ function ReviewCard({
       )}
     </div>
   )
-}
-
-/** Detect if an action implies deep research (web search + LLM synthesis) */
-function actionLooksLikeResearch(action: string): boolean {
-  // Skip internal action identifiers
-  if (action.startsWith("__")) return false
-  const lower = action.toLowerCase()
-  return (
-    lower.includes("research") ||
-    lower.includes("investigate") ||
-    lower.includes("explore") ||
-    lower.includes("look into") ||
-    lower.includes("研究") ||
-    lower.includes("调研") ||
-    lower.includes("探索")
-  )
-}
-
-function actionLooksLikeOpen(action: string): boolean {
-  const lower = action.trim().toLowerCase()
-  return (
-    lower === "open" ||
-    lower === "view" ||
-    lower === "open page" ||
-    lower === "view page" ||
-    lower === "打开" ||
-    lower === "查看" ||
-    lower === "打开页面" ||
-    lower === "查看页面"
-  )
-}
-
-/** Detect if an action is a dismissal (no-op) or should create a page */
-function actionIsDismissal(action: string): boolean {
-  const lower = action.toLowerCase()
-  return (
-    lower === "skip" ||
-    lower === "dismiss" ||
-    lower === "ignore" ||
-    lower === "跳过" ||
-    lower === "忽略" ||
-    lower === "approve" ||
-    lower === "keep existing" ||
-    lower === "no"
-  )
-}
-
-function actionLooksLikeCreate(action: string): boolean {
-  // Anything that isn't a dismissal should create a page
-  return !actionIsDismissal(action)
 }
 
 /** Infer wiki page type from action text and review item type */

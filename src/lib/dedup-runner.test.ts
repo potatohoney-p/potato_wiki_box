@@ -34,7 +34,7 @@ vi.mock("./llm-client", async () => {
 vi.mock("@/commands/fs", () => ({
   listDirectory: mockListDirectory,
   readFile: mockReadFile,
-  writeFile: vi.fn(),
+  writeFileAtomic: vi.fn(),
   deleteFile: vi.fn(),
 }))
 vi.mock("@/lib/project-store", () => ({

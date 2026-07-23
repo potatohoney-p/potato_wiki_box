@@ -1,74 +1,72 @@
-# LLM Wiki MCP Server
+# potato box MCP Server
 
-This package exposes the running LLM Wiki desktop app as a Model Context Protocol server.
-
-It does **not** scan project folders directly and does **not** copy the app's search or graph logic. Every tool calls the local desktop API at `http://127.0.0.1:19828/api/v1`, so MCP clients use the same project registry, file permissions, search backend, graph backend, and Source Watch rules as the app.
+This package exposes a running potato box desktop app to Model Context Protocol clients. It does not scan project directories itself. Every tool calls the authenticated desktop API at `http://127.0.0.1:19828/api/v1`, preserving the app's project registry, retrieval behavior, and file allow-list.
 
 ## Requirements
 
-- Node.js 20+
-- LLM Wiki desktop app running
-- Settings → API + MCP → "Enable local HTTP API"
-- Settings → API + MCP → "Enable MCP access"
-- Either:
-  - Settings → API + MCP → "Allow access without a token", or
-  - `LLM_WIKI_API_TOKEN` set to the configured API token
+- Node.js 20 or newer
+- potato box desktop app running
+- Settings -> API + MCP -> Enable local HTTP API
+- Settings -> API + MCP -> Enable MCP access
+- `POTATO_BOX_API_TOKEN` set to the configured API token
 
-Optional:
+Authentication cannot be disabled. Do not place the token in command-line arguments or commit it to an MCP configuration repository.
 
-- `LLM_WIKI_API_BASE_URL` to override the default API base URL.
-
-## Build
+## Build and Test
 
 ```bash
-cd mcp-server
-npm install
+npm ci
 npm run build
+npm test
 ```
 
 ## Run
 
 ```bash
-LLM_WIKI_API_TOKEN=your-token node dist/src/index.js
+POTATO_BOX_API_TOKEN=your-token node dist/index.js
 ```
 
-Example MCP client config:
+Optional environment variable:
+
+- `POTATO_BOX_API_BASE_URL`: override the default loopback API URL. Use only a trusted endpoint.
+
+Example client configuration:
 
 ```json
 {
   "mcpServers": {
-    "llm-wiki": {
+    "potato-box": {
       "command": "node",
-      "args": ["/absolute/path/to/llm_wiki/mcp-server/dist/src/index.js"],
+      "args": ["/absolute/path/to/potato-box/mcp-server/dist/index.js"],
       "env": {
-        "LLM_WIKI_API_TOKEN": "your-token"
+        "POTATO_BOX_API_TOKEN": "replace-with-your-token"
       }
     }
   }
 }
 ```
 
-When API unauthenticated mode is enabled, omit `LLM_WIKI_API_TOKEN`. If MCP access is disabled in Settings, `llm_wiki_status` still works for diagnosis but other tools return an explicit disabled error.
-
 ## Tools
 
-- `llm_wiki_status`: health and current project summary.
-- `llm_wiki_projects`: known projects and active project.
-- `llm_wiki_files`: list project files. `project_id` can be a project UUID, a project filesystem path, or `current`.
-- `llm_wiki_read_file`: read an allowed text file such as `wiki/index.md`.
-- `llm_wiki_reviews`: list Review tab items. Defaults to unresolved items and supports `status`, `type`, and `limit` filters.
-- `llm_wiki_search`: search with the app's shared keyword/vector backend.
-- `llm_wiki_graph`: query the app's knowledge graph endpoint.
-- `llm_wiki_rescan_sources`: trigger a Source Watch rescan using the user's configured rules.
+- `potato_box_status`: API and current-project health.
+- `potato_box_projects`: known public project summaries.
+- `potato_box_files`: allowed files for a UUID project ID or `current`.
+- `potato_box_read_file`: an allowed project-relative text file.
+- `potato_box_reviews`: filtered review items through the dedicated endpoint.
+- `potato_box_search`: keyword/vector retrieval through the app backend.
+- `potato_box_graph`: knowledge graph data through the app backend.
+- `potato_box_rescan_sources`: trigger the configured source-watch rescan.
 
-## Security model
+Project filesystem paths are not valid `project_id` values. Use a UUID returned by `potato_box_projects` or the `current` alias.
 
-The MCP server inherits the desktop API's security model:
+## Security Model
 
-- It only talks to `127.0.0.1` by default.
-- It uses the same API token or unauthenticated setting as Settings → API + MCP.
-- File reads go through the API path allow-list. Internal app state files are not exposed.
-- Review data is exposed only through the dedicated Review endpoint/tool, which defaults to unresolved items rather than opening internal state files directly.
-- Search and graph tools operate on projects known to the app; use `project_id: "current"` for the active project.
+- The default endpoint is loopback-only.
+- Every non-health request requires the configured token.
+- MCP access can be disabled independently in the app.
+- Tokens are sent in headers, never query strings.
+- Internal `.potato-box` and legacy state files are excluded from general file reads.
+- Read paths are project-relative and checked against the selected registered project.
+- The projects response does not expose filesystem paths.
 
-Do not pass API tokens via command-line arguments. Prefer environment variables so they do not appear in shell history.
+See the repository [threat model](../docs/THREAT_MODEL.md) and [security policy](../SECURITY.md).

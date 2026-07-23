@@ -406,7 +406,7 @@ describe("isSafeIngestPath — what the validator accepts and rejects", () => {
 
   it("rejects absolute POSIX paths", () => {
     expect(isSafeIngestPath("/etc/passwd")).toBe(false)
-    expect(isSafeIngestPath("/Users/nash_su/.ssh/authorized_keys")).toBe(false)
+    expect(isSafeIngestPath("/Users/example/.ssh/authorized_keys")).toBe(false)
     expect(isSafeIngestPath("/wiki/foo.md")).toBe(false) // even with wiki/ in the path
   })
 

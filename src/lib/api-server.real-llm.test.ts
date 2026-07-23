@@ -1,5 +1,5 @@
 /**
- * Real local-API tests against a running LLM Wiki desktop app.
+ * Real local-API tests against a running potato box desktop app.
  *
  * These tests intentionally perform real HTTP calls to
  * http://127.0.0.1:19828/api/v1 and use a real project id. They are gated
@@ -8,7 +8,7 @@
  * enabled in Settings -> API + MCP.
  *
  * WARNING: the auth/config tests mutate the live app-state.json to verify
- * enabled=false and unauthenticated mode. They restore the original file in
+ * enabled=false and token enforcement. They restore the original file in
  * afterAll, but run this against a dedicated test project when possible.
  *
  * Example:
@@ -28,8 +28,8 @@ const ENABLED = process.env.RUN_API_TESTS === "1" || process.env.RUN_LLM_TESTS =
 const BASE_URL = process.env.API_BASE_URL ?? API_SERVER_BASE_URL
 const PROJECT_ID =
   process.env.API_PROJECT_ID ?? "a0e90b29-fcf3-4364-9502-8bd1272de820"
-const API_TOKEN = process.env.API_TOKEN ?? process.env.LLM_WIKI_API_TOKEN ?? ""
-const TEST_TOKEN = process.env.API_TEST_TOKEN ?? "llm-wiki-real-api-test-token"
+const API_TOKEN = process.env.API_TOKEN ?? process.env.POTATO_BOX_API_TOKEN ?? ""
+const TEST_TOKEN = process.env.API_TEST_TOKEN ?? "potato-box-real-api-test-token"
 
 const TEST_TIMEOUT_MS = 30_000
 const RESCAN_TIMEOUT_MS = 60_000
@@ -45,14 +45,12 @@ interface ApiHealth extends ApiEnvelope {
   enabled?: boolean
   authRequired?: boolean
   authConfigured?: boolean
-  allowUnauthenticated?: boolean
   tokenSource?: "env" | "store" | "none"
 }
 
 interface ApiProject {
   id: string
   name: string
-  path: string
   current: boolean
 }
 
@@ -121,7 +119,7 @@ async function api<T extends ApiEnvelope>(
       : authMode === "bearer"
         ? { Authorization: `Bearer ${token}` }
         : authMode === "xToken"
-          ? { "X-LLM-Wiki-Token": token }
+          ? { "X-Potato-Box-Token": token }
           : authHeaders()
   const headers = {
     ...auth,
@@ -205,9 +203,9 @@ async function requireUsableApi(): Promise<ApiHealth> {
   const h = await health()
   expect(h.status).toBe("running")
   expect(h.enabled).toBe(true)
-  if (h.authRequired && !h.allowUnauthenticated && !API_TOKEN) {
+  if (h.authRequired && !API_TOKEN) {
     throw new Error(
-      "API requires auth. Re-run with API_TOKEN=<token> or enable Settings -> API + MCP -> Allow access without a token.",
+      "API requires auth. Re-run with API_TOKEN=<token>.",
     )
   }
   return h
@@ -219,19 +217,27 @@ function appStateCandidates(): string[] {
   const candidates = explicit ? [explicit] : []
   if (process.platform === "darwin") {
     candidates.push(
+      path.join(home, "Library/Application Support/com.potatobox.app/app-state.json"),
+      path.join(home, "Library/Application Support/potato box/app-state.json"),
       path.join(home, "Library/Application Support/com.llmwiki.app/app-state.json"),
-      path.join(home, "Library/Application Support/LLM Wiki/app-state.json"),
     )
   } else if (process.platform === "win32") {
     const appData = process.env.APPDATA ?? path.join(home, "AppData/Roaming")
     candidates.push(
+      path.join(appData, "com.potatobox.app/app-state.json"),
+      path.join(appData, "potato box/app-state.json"),
       path.join(appData, "com.llmwiki.app/app-state.json"),
-      path.join(appData, "LLM Wiki/app-state.json"),
     )
   } else {
+    const dataHome = process.env.XDG_DATA_HOME ?? path.join(home, ".local/share")
+    const configHome = process.env.XDG_CONFIG_HOME ?? path.join(home, ".config")
     candidates.push(
-      path.join(process.env.XDG_DATA_HOME ?? path.join(home, ".local/share"), "com.llmwiki.app/app-state.json"),
-      path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, ".config"), "com.llmwiki.app/app-state.json"),
+      path.join(dataHome, "com.potatobox.app/app-state.json"),
+      path.join(configHome, "com.potatobox.app/app-state.json"),
+      path.join(dataHome, "potato box/app-state.json"),
+      path.join(configHome, "potato box/app-state.json"),
+      path.join(dataHome, "com.llmwiki.app/app-state.json"),
+      path.join(configHome, "com.llmwiki.app/app-state.json"),
     )
   }
   return [...new Set(candidates)]
@@ -258,7 +264,6 @@ async function readAppState(): Promise<Record<string, unknown>> {
 
 async function writeApiConfig(config: {
   enabled: boolean
-  allowUnauthenticated: boolean
   token: string
 }): Promise<void> {
   const state = await readAppState()
@@ -308,7 +313,7 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
     try {
       initialHealth = await waitForHealth(() => true, "server reachable", 2_000)
     } catch (err) {
-      serverUnavailableReason = `App is not running or the local API is unreachable at ${BASE_URL}. Launch LLM Wiki first, then re-run. ${String(err)}`
+      serverUnavailableReason = `App is not running or the local API is unreachable at ${BASE_URL}. Launch potato box first, then re-run. ${String(err)}`
       return
     }
     appStatePath = await resolveAppStatePath()
@@ -318,9 +323,7 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
     if (appStateMutated && appStatePath && originalAppStateRaw !== null) {
       await fs.writeFile(appStatePath, originalAppStateRaw, "utf8")
       await waitForHealth(
-        (h) =>
-          h.enabled === initialHealth?.enabled &&
-          h.allowUnauthenticated === initialHealth?.allowUnauthenticated,
+        (h) => h.enabled === initialHealth?.enabled,
         "original API config restored",
       ).catch((err) => {
         console.warn("[api-real-test] failed to observe restored API config:", err)
@@ -335,7 +338,7 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
       const h = await requireUsableApi()
       expect(typeof h.authRequired).toBe("boolean")
       expect(typeof h.authConfigured).toBe("boolean")
-      expect(typeof h.allowUnauthenticated).toBe("boolean")
+      expect(h.authRequired).toBe(true)
       expect(["env", "store", "none"]).toContain(h.tokenSource)
     },
     TEST_TIMEOUT_MS,
@@ -345,14 +348,14 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
     "enforces the token auth matrix when auth is required",
     async (ctx) => {
       ensureMutableAppState(ctx)
-      await writeApiConfig({ enabled: true, allowUnauthenticated: false, token: TEST_TOKEN })
+      await writeApiConfig({ enabled: true, token: TEST_TOKEN })
       const h = await waitForHealth(
-        (value) => value.enabled === true && value.allowUnauthenticated === false && value.authRequired === true,
+        (value) => value.enabled === true && value.authRequired === true,
         "auth required",
       )
       const effectiveToken = h.tokenSource === "env" ? API_TOKEN : TEST_TOKEN
       if (!effectiveToken) {
-        console.warn("Skipping positive auth checks because the running app uses LLM_WIKI_API_TOKEN and API_TOKEN was not provided.")
+        console.warn("Skipping positive auth checks because the running app uses POTATO_BOX_API_TOKEN and API_TOKEN was not provided.")
       }
 
       const noToken = await api<ApiEnvelope>("/api/v1/projects", {}, { auth: "none" })
@@ -386,7 +389,7 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
           {},
           { auth: "none" },
         )
-        expect(query.status).toBe(200)
+        expect(query.status).toBe(401)
       }
     },
     TEST_TIMEOUT_MS,
@@ -396,7 +399,7 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
     "honors the enabled=false kill switch",
     async (ctx) => {
       ensureMutableAppState(ctx)
-      await writeApiConfig({ enabled: false, allowUnauthenticated: false, token: TEST_TOKEN })
+      await writeApiConfig({ enabled: false, token: TEST_TOKEN })
       await waitForHealth((value) => value.enabled === false, "API disabled")
       const resp = await api<ApiEnvelope>(
         "/api/v1/projects",
@@ -405,24 +408,6 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
       )
       expect(resp.status).toBe(503)
       expect(resp.body.error).toContain("disabled")
-    },
-    TEST_TIMEOUT_MS,
-  )
-
-  it(
-    "allows no-token access when unauthenticated mode is enabled",
-    async (ctx) => {
-      ensureMutableAppState(ctx)
-      await writeApiConfig({ enabled: true, allowUnauthenticated: true, token: "" })
-      await waitForHealth(
-        (value) => value.enabled === true && value.allowUnauthenticated === true && value.authRequired === false,
-        "unauthenticated mode",
-      )
-      const resp = await api<ApiEnvelope & { projects: ApiProject[]; currentProject?: ApiProject | null }>("/api/v1/projects", {}, { auth: "none" })
-      expect(resp.status).toBe(200)
-      expect(resp.body.ok).toBe(true)
-      expect(Array.isArray(resp.body.projects)).toBe(true)
-      expect(resp.body.currentProject == null || resp.body.currentProject.current).toBe(true)
     },
     TEST_TIMEOUT_MS,
   )
@@ -438,12 +423,11 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
       expect(Array.isArray(body.projects)).toBe(true)
       const project = body.projects.find((p) => p.id === PROJECT_ID)
       expect(project, `project ${PROJECT_ID} should be known to the API`).toBeTruthy()
-      expect(project!.path).toBeTruthy()
+      expect(project).not.toHaveProperty("path")
       const currentFromList = body.projects.find((p) => p.current)
       if (currentFromList) {
         expect(body.currentProject).toMatchObject({
           id: currentFromList.id,
-          path: currentFromList.path,
           current: true,
         })
       } else {
@@ -596,7 +580,7 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
   )
 
   it(
-    "reports chat as not implemented in API v1",
+    "does not expose an unfinished chat endpoint in API v1",
     async (ctx) => {
       ensureServer(ctx)
       await requireUsableApi()
@@ -604,7 +588,7 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
         method: "POST",
         body: JSON.stringify({ message: "hello" }),
       })
-      expect(chatResp.status).toBe(501)
+      expect(chatResp.status).toBe(404)
       expect(chatResp.body.ok).toBe(false)
     },
     TEST_TIMEOUT_MS,
@@ -707,19 +691,16 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
   )
 
   it(
-    "supports current and filesystem-path project identifiers",
+    "supports current and rejects filesystem-path project identifiers",
     async (ctx) => {
       ensureServer(ctx)
       await requireUsableApi()
       const projectsResp = await api<ApiEnvelope & { projects: ApiProject[]; currentProject?: ApiProject | null }>("/api/v1/projects")
       expect(projectsResp.status).toBe(200)
-      const target = projectsResp.body.projects.find((p) => p.id === PROJECT_ID)
-      expect(target).toBeTruthy()
-
       const byPath = await api<ApiEnvelope & { files: ApiFileNode[] }>(
-        `/api/v1/projects/${encodeURIComponent(target!.path)}/files?root=wiki&recursive=false`,
+        `/api/v1/projects/${encodeURIComponent("C:/private/project")}/files?root=wiki&recursive=false`,
       )
-      expect(byPath.status).toBe(200)
+      expect(byPath.status).toBe(404)
 
       const current = projectsResp.body.projects.find((p) => p.current)
       if (!current) {
@@ -728,7 +709,6 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
       }
       expect(projectsResp.body.currentProject).toMatchObject({
         id: current!.id,
-        path: current!.path,
         current: true,
       })
       const currentResp = await api<ApiEnvelope & { files: ApiFileNode[] }>(

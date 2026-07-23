@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { LlmWikiApiClient, normalizeBaseUrl } from "../src/api-client.js"
+import { PotatoBoxApiClient, normalizeBaseUrl } from "../src/api-client.js"
 
 test("normalizeBaseUrl trims trailing slashes and falls back to localhost", () => {
   assert.equal(normalizeBaseUrl("http://127.0.0.1:19828///"), "http://127.0.0.1:19828")
@@ -18,7 +18,7 @@ test("projects sends bearer token and parses current project", async () => {
     }), { status: 200 })
   }
 
-  const client = new LlmWikiApiClient({
+  const client = new PotatoBoxApiClient({
     baseUrl: "http://localhost:19828/",
     token: "secret",
     fetchImpl,
@@ -38,7 +38,7 @@ test("health does not send authorization", async () => {
     return new Response(JSON.stringify({ ok: true, status: "running" }), { status: 200 })
   }
 
-  const client = new LlmWikiApiClient({ token: "secret", fetchImpl })
+  const client = new PotatoBoxApiClient({ token: "secret", fetchImpl })
   await client.health()
 
   assert.equal((calls[0]?.headers as Record<string, string> | undefined)?.Authorization, undefined)
@@ -57,7 +57,7 @@ test("search posts JSON body to current project", async () => {
     }), { status: 200 })
   }
 
-  const client = new LlmWikiApiClient({ fetchImpl })
+  const client = new PotatoBoxApiClient({ fetchImpl })
   const results = await client.search("current", "query", { topK: 3, includeContent: true })
 
   assert.deepEqual(JSON.parse(body), { query: "query", topK: 3, includeContent: true })
@@ -76,7 +76,7 @@ test("graph parses nodeType from API graph nodes", async () => {
     }), { status: 200 })
   )
 
-  const client = new LlmWikiApiClient({ fetchImpl })
+  const client = new PotatoBoxApiClient({ fetchImpl })
   const graph = await client.graph("current")
 
   assert.equal(graph.nodes[0]?.type, "concept")
@@ -93,7 +93,7 @@ test("files exposes truncated flag", async () => {
     }), { status: 200 })
   )
 
-  const client = new LlmWikiApiClient({ fetchImpl })
+  const client = new PotatoBoxApiClient({ fetchImpl })
   const files = await client.files("current")
 
   assert.equal(files.truncated, true)
@@ -121,7 +121,7 @@ test("reviews requests unresolved review items with filters", async () => {
     }), { status: 200 })
   }
 
-  const client = new LlmWikiApiClient({ baseUrl: "http://localhost:19828", fetchImpl })
+  const client = new PotatoBoxApiClient({ baseUrl: "http://localhost:19828", fetchImpl })
   const result = await client.reviews("current", {
     status: "unresolved",
     type: "missing-page",
@@ -140,7 +140,7 @@ test("network failures include desktop app hint", async () => {
     throw new Error("ECONNREFUSED")
   }
 
-  const client = new LlmWikiApiClient({ fetchImpl })
+  const client = new PotatoBoxApiClient({ fetchImpl })
   await assert.rejects(() => client.projects(), /Is the desktop app running\? ECONNREFUSED/)
 })
 
@@ -149,7 +149,7 @@ test("non-JSON responses include status and body preview", async () => {
     new Response("not json", { status: 502, statusText: "Bad Gateway" })
   )
 
-  const client = new LlmWikiApiClient({ fetchImpl })
+  const client = new PotatoBoxApiClient({ fetchImpl })
   await assert.rejects(() => client.projects(), /non-JSON response \(502\): not json/)
 })
 
@@ -158,6 +158,6 @@ test("API errors include status and server message", async () => {
     new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401 })
   )
 
-  const client = new LlmWikiApiClient({ fetchImpl })
-  await assert.rejects(() => client.projects(), /LLM Wiki API 401: Unauthorized/)
+  const client = new PotatoBoxApiClient({ fetchImpl })
+  await assert.rejects(() => client.projects(), /potato box API 401: Unauthorized/)
 })

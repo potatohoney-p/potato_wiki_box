@@ -81,7 +81,7 @@ describe("provider connection tests", () => {
 
   it("validates LLM functional output token", async () => {
     streamChatMock.mockImplementationOnce(async (_cfg, _messages, callbacks) => {
-      callbacks.onToken("LLM_WIKI_TEST_OK")
+      callbacks.onToken("POTATO_BOX_TEST_OK")
       callbacks.onDone()
     })
 
@@ -127,7 +127,7 @@ describe("provider connection tests", () => {
     "isolates local CLI configuration during %s %s tests",
     async (_label, provider, kind, initialIsolation) => {
       streamChatMock.mockImplementationOnce(async (_cfg, _messages, callbacks) => {
-        callbacks.onToken(kind === "functional" ? "LLM_WIKI_TEST_OK" : "OK")
+        callbacks.onToken(kind === "functional" ? "POTATO_BOX_TEST_OK" : "OK")
         callbacks.onDone()
       })
       const cfg: LlmConfig = {

@@ -27,6 +27,34 @@
  * conversations with the same topic, or repeated "Untitled" saves).
  */
 
+/**
+ * Derive a short, display-safe title from saved Markdown content.
+ * Wiki aliases cannot contain nested wikilinks, pipes, or brackets, so
+ * normalize those before the title is written to frontmatter and index.md.
+ */
+export function deriveQueryTitle(content: string, fallback = "Saved Query"): string {
+  const firstContentLine = content
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith("<!--"))
+
+  if (!firstContentLine) return fallback
+
+  const normalized = firstContentLine
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^[-*>]\s+/, "")
+    .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target: string, alias?: string) =>
+      (alias?.trim() || target.trim()),
+    )
+    .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+    .replace(/[`*_~]/g, "")
+    .replace(/[|[\]]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  return Array.from(normalized || fallback).slice(0, 60).join("")
+}
+
 /** Produce just the slug — exported for tests / callers that want
  *  to reuse it in places like the index.md wikilink target. */
 export function makeQuerySlug(title: string): string {

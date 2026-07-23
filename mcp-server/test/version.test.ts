@@ -19,7 +19,7 @@ test("MCP server version supports source-layout execution", () => {
 })
 
 test("MCP server version falls back when package.json cannot be found", () => {
-  assert.equal(loadMcpServerVersion("file:///tmp/llm-wiki-missing/dist/src/version.js"), FALLBACK_VERSION)
+  assert.equal(loadMcpServerVersion("file:///tmp/potato-box-missing/dist/src/version.js"), FALLBACK_VERSION)
 })
 
 test("MCP server version falls back for invalid meta URLs", () => {

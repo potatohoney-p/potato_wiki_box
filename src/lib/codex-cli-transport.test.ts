@@ -91,6 +91,14 @@ describe("buildPrompt", () => {
     expect(prompt).toContain("[Image omitted: image/png]")
     expect(prompt).not.toContain("abc")
   })
+
+  it("forces Codex to behave as a completion backend without tools", () => {
+    const prompt = buildPrompt([{ role: "user", content: "Summarize the supplied context." }])
+
+    expect(prompt).toContain("Act only as a text-completion backend for potato box.")
+    expect(prompt).toContain("Do not inspect the filesystem, run shell commands, call tools")
+    expect(prompt).toContain("return the requested answer directly")
+  })
 })
 
 describe("streamCodexCli", () => {
@@ -427,6 +435,55 @@ describe("streamCodexCli", () => {
 
     expect(callbacks.onToken).toHaveBeenCalledTimes(1)
     expect(callbacks.onToken).toHaveBeenCalledWith("live analysis")
+    expect(callbacks.onDone).toHaveBeenCalledTimes(1)
+    expect(callbacks.onError).not.toHaveBeenCalled()
+  })
+
+  it("emits only the final agent message when Codex sends an intermediate preamble", async () => {
+    const callbacks = {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    }
+
+    const stream = streamCodexCli(
+      {
+        provider: "codex-cli",
+        apiKey: "",
+        model: "gpt-5.1-codex-mini",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+      [{ role: "user", content: "Connect these ideas." }],
+      callbacks,
+    )
+
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledTimes(1)
+    })
+
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    const preamble = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "I will inspect the project first." },
+    })
+    const finalAnswer = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "Final connected answer." },
+    })
+    tauriMocks.emit(`codex-cli:${payload.streamId}`, preamble)
+    tauriMocks.emit(`codex-cli:${payload.streamId}`, finalAnswer)
+    tauriMocks.emit(`codex-cli:${payload.streamId}:done`, {
+      code: 0,
+      stderr: "",
+      stdout: [preamble, finalAnswer].join("\n"),
+    })
+
+    await stream
+
+    expect(callbacks.onToken).toHaveBeenCalledTimes(1)
+    expect(callbacks.onToken).toHaveBeenCalledWith("Final connected answer.")
     expect(callbacks.onDone).toHaveBeenCalledTimes(1)
     expect(callbacks.onError).not.toHaveBeenCalled()
   })

@@ -390,7 +390,7 @@ describe("autoIngest source summary paths", () => {
       autoIngest(tmp.path, longSourcePath, llmConfig, undefined, "project-a"),
     ).rejects.toThrow("Chunk analysis stream failed")
 
-    const progressDir = path.join(tmp.path, ".llm-wiki", "ingest-progress")
+    const progressDir = path.join(tmp.path, ".potato-box", "ingest-progress")
     expect((await fs.readdir(progressDir)).filter((name) => name.endsWith(".json"))).toHaveLength(1)
 
     mockStreamChat.mockClear()

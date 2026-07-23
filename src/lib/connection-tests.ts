@@ -25,7 +25,7 @@ export async function testEmbeddingConnection(cfg: EmbeddingConfig): Promise<Pro
   }
 
   const started = performance.now()
-  const vector = await fetchEmbedding("LLM Wiki embedding connection test.", cfg, 0)
+  const vector = await fetchEmbedding("potato box embedding connection test.", cfg, 0)
   if (!vector) {
     return {
       ok: false,
@@ -40,8 +40,8 @@ export async function testEmbeddingConnection(cfg: EmbeddingConfig): Promise<Pro
 }
 
 export async function testEmbeddingFunction(cfg: EmbeddingConfig): Promise<ProviderTestResult> {
-  const first = await fetchEmbedding("LLM Wiki functional embedding test: apple banana graph.", cfg, 0)
-  const second = await fetchEmbedding("LLM Wiki functional embedding test: apple banana graph.", cfg, 0)
+  const first = await fetchEmbedding("potato box functional embedding test: apple banana graph.", cfg, 0)
+  const second = await fetchEmbedding("potato box functional embedding test: apple banana graph.", cfg, 0)
   if (!first || !second) {
     return {
       ok: false,
@@ -110,7 +110,7 @@ export async function testLlmFunction(cfg: LlmConfig): Promise<ProviderTestResul
         role: "system",
         content: "You are a deterministic API test. Do not explain. Output only the requested token.",
       },
-      { role: "user", content: "Output exactly this token and nothing else: LLM_WIKI_TEST_OK" },
+      { role: "user", content: "Output exactly this token and nothing else: POTATO_BOX_TEST_OK" },
     ],
     {
       onToken: (token) => { content += token },
@@ -123,7 +123,7 @@ export async function testLlmFunction(cfg: LlmConfig): Promise<ProviderTestResul
 
   if (errorMessage) return { ok: false, message: errorMessage }
   const trimmed = content.trim()
-  if (!trimmed.includes("LLM_WIKI_TEST_OK")) {
+  if (!trimmed.includes("POTATO_BOX_TEST_OK")) {
     return {
       ok: false,
       message: `Model responded, but did not follow the functional test prompt. Response: ${trimmed.slice(0, 120) || "(empty)"}`,

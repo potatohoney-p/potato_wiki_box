@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "LLM Wiki",
-    "subtitle": "Build and maintain your personal knowledge base with LLMs"
+    "title": "potato box",
+    "subtitle": "Turn your sources into a local, inspectable knowledge base"
   },
   "nav": {
     "chat": "Chat",
@@ -11,10 +11,70 @@
     "graph": "Graph",
     "lint": "Lint",
     "review": "Review",
+    "health": "Health",
     "settings": "Settings",
     "switchProject": "Switch Project",
     "updateAvailable": "Update available",
-    "updateAvailableSuffix": " · update"
+    "updateAvailableSuffix": " · update",
+    "clipServerRunning": "Clip server running",
+    "clipServerStarting": "Clip server starting...",
+    "clipServerPortConflict": "Port 19827 is occupied. Web Clipper unavailable.",
+    "clipServerError": "Clip server error. Restarting..."
+  },
+  "health": {
+    "title": "Knowledge Health",
+    "refresh": "Refresh",
+    "scanning": "Scanning project...",
+    "score": "Health score",
+    "pages": "Wiki pages",
+    "sources": "Source files",
+    "provenance": "Provenance",
+    "services": "Local services",
+    "serviceLabels": {
+      "clipper": "Clipper",
+      "api": "API",
+      "llm": "LLM",
+      "fileSync": "File sync"
+    },
+    "status": {
+      "running": "Running",
+      "ready": "Ready",
+      "error": "Error",
+      "disabled": "Disabled",
+      "notConfigured": "Not configured",
+      "stopped": "Stopped",
+      "starting": "Starting"
+    },
+    "findings": {
+      "title": "Findings",
+      "clear": "No actionable health findings.",
+      "llm": "No usable LLM provider is configured.",
+      "failedTasks": "{{count}} ingest task(s) need attention.",
+      "brokenLinks": "{{count}} broken wiki link(s) were found.",
+      "collisions": "{{count}} duplicate page basename(s) can resolve ambiguously.",
+      "provenance": "Only {{value}}% of content pages declare sources.",
+      "clips": "{{count}} web clip(s) are waiting for ingest.",
+      "orphans": "{{count}} page(s) have no inbound links."
+    },
+    "operations": {
+      "title": "Recovery and support",
+      "backup": "Create backup",
+      "restore": "Restore to new folder",
+      "export": "Export diagnostics",
+      "copy": "Copy diagnostics",
+      "backingUp": "Creating and verifying backup...",
+      "restoring": "Validating and restoring backup...",
+      "backupVerified": "Backup verified",
+      "backupDetails": "{{files}} files, {{size}}",
+      "restored": "Restored to a new folder",
+      "openFolder": "Open folder",
+      "diagnosticsExported": "Diagnostics exported to {{path}}",
+      "diagnosticsCopied": "Diagnostics copied"
+    }
+  },
+  "nativeRuntime": {
+    "desktopRequired": "System folder access is unavailable in the browser preview. Use the potato box desktop app to create, open, or import projects.",
+    "directoryPickerFailed": "Could not open the system folder picker: {{error}}"
   },
   "updateBanner": {
     "message": "Version {{version}} is available",
@@ -24,7 +84,8 @@
   "welcome": {
     "newProject": "New Project",
     "openProject": "Open Project",
-    "recentProjects": "Recent Projects"
+    "recentProjects": "Recent Projects",
+    "removeRecent": "Remove {{name}} from recent projects"
   },
   "sidebar": {
     "knowledge": "Knowledge",
@@ -53,7 +114,7 @@
     }
   },
   "project": {
-    "createTitle": "Create New Wiki Project",
+    "createTitle": "Create Project",
     "name": "Project Name",
     "namePlaceholder": "my-research-wiki",
     "parentDir": "Parent Directory",
@@ -240,15 +301,15 @@
         "title": "General",
         "description": "Startup and window behavior for the desktop app.",
         "autostart": "Launch at system startup",
-        "autostartHint": "Starts LLM Wiki automatically after you sign in to this computer.",
+        "autostartHint": "Starts potato box automatically after you sign in to this computer.",
         "closeBehavior": "When closing the window",
         "closeBehaviorHint": "This setting applies when you click the title-bar close button. The tray menu can still quit the app directly.",
         "closeAsk": "Ask every time",
         "closeAskHint": "Show a confirmation. Cancel hides the window and keeps background features running.",
         "closeMinimize": "Hide window",
-        "closeMinimizeHint": "Keep LLM Wiki running in the background when the window closes. On macOS this matches the normal red close button behavior. If a Linux tray is unavailable, the window is minimized instead of hidden.",
+        "closeMinimizeHint": "Keep potato box running in the background when the window closes. On macOS this matches the normal red close button behavior. If a Linux tray is unavailable, the window is minimized instead of hidden.",
         "closeExit": "Quit app",
-        "closeExitHint": "Exit LLM Wiki immediately when the window closes."
+        "closeExitHint": "Exit potato box immediately when the window closes."
       },
       "llm": {
         "title": "LLM Models",
@@ -278,7 +339,7 @@
         "providerTests": "Provider tests",
         "providerTestsHint": "Connection test verifies the endpoint can respond. Functional test asks the model to follow a tiny instruction.",
         "localCliIsolation": "Isolate local CLI configuration",
-        "localCliIsolationHint": "Optional for Claude Code and Codex CLI. When enabled, LLM Wiki asks the CLI to ignore user-level rules/config/MCP/tools where supported. This is configuration isolation, not a process sandbox: the CLI still uses your local login credentials and network access. Leave off if you intentionally rely on your local CLI setup.",
+        "localCliIsolationHint": "Optional for Claude Code and Codex CLI. When enabled, potato box asks the CLI to ignore user-level rules/config/MCP/tools where supported. This is configuration isolation, not a process sandbox: the CLI still uses your local login credentials and network access. Leave off if you intentionally rely on your local CLI setup.",
         "localCliIsolationOn": "Isolation on: user CLI rules, MCP/tools, and persisted sessions are disabled where the CLI supports it. Local credentials and network access are still controlled by the CLI itself.",
         "localCliIsolationOff": "Isolation off: this provider can use your normal local CLI configuration.",
         "codexCliTimeout": "Codex CLI timeout",
@@ -383,7 +444,7 @@
       },
       "webSearch": {
         "title": "External Information Sources",
-        "description": "Configure external information sources that LLM Wiki can use.",
+        "description": "Configure external information sources that potato box can use.",
         "deepResearchSources": "Deep Research source mode",
         "deepResearchSourcesHint": "Web Search uses the selected online provider. AnyTXT searches local indexed files through ATGUI.exe on this machine.",
         "sourceWeb": "Web Search",
@@ -460,8 +521,8 @@
         "description": "Automatically monitor a directory and import new or modified files at regular intervals.",
         "enable": "Enable scheduled import",
         "directory": "Monitor Directory",
-        "directoryHelp": "Choose an external folder outside the current LLM Wiki project. Project folders such as raw, raw/sources, wiki, and .llm-wiki are skipped because source folder monitoring already handles them.",
-        "managedPathWarning": "This path is inside the current LLM Wiki project and is already managed by source folder monitoring. Pick an external folder to avoid duplicate scans.",
+        "directoryHelp": "Choose an external folder outside the current potato box project. Project folders such as raw, raw/sources, wiki, and .potato-box are skipped because source folder monitoring already handles them.",
+        "managedPathWarning": "This path is inside the current potato box project and is already managed by source folder monitoring. Pick an external folder to avoid duplicate scans.",
         "privacyNotice": "Files from the selected directory may be copied into this project and sent to your configured LLM during ingest. Removed files are not automatically deleted from the project.",
         "browse": "Browse",
         "selectDirectory": "Select Directory to Monitor",
@@ -474,12 +535,11 @@
       },
       "apiServer": {
         "title": "API + MCP",
-        "description": "Expose LLM Wiki to your own tools through the local HTTP API, and optionally through the bundled MCP server for agent clients.",
+        "description": "Expose potato box to your own tools through the local HTTP API, and optionally through the bundled MCP server for agent clients.",
         "enable": "Enable local HTTP API",
         "enableHint": "Disable to make every non-/health endpoint return 503 even if a token is configured. Useful as a kill-switch without unsetting the token.",
         "status": "Status",
         "statusRunning": "Running",
-        "statusOpen": "Running, no auth",
         "statusNoToken": "Running, no token",
         "statusDisabled": "Disabled",
         "statusStarting": "Starting…",
@@ -489,15 +549,13 @@
         "baseUrl": "Base URL",
         "openHealth": "Open /health",
         "openHealthHint": "Opens in your system browser. /health is the only unauthenticated endpoint.",
-        "allowUnauthenticated": "Allow access without a token",
-        "allowUnauthenticatedHint": "Use only for trusted local agents. Any process or browser page on this machine can call the API while this is enabled.",
         "mcpEnable": "Enable MCP access",
         "mcpEnableHint": "MCP uses the local API and the same token rules. Keep the HTTP API enabled, then connect an MCP client to the bundled Node server.",
         "mcpUsage": "MCP usage",
-        "mcpUsageHint": "Build once with `npm run mcp:build`, then configure your MCP client to run the server below. Use LLM_WIKI_API_TOKEN unless unauthenticated access is enabled.",
-        "mcpPathUnavailable": "MCP server entry was not found. Run `npm run mcp:build` from the LLM Wiki repository, then reopen Settings.",
+        "mcpUsageHint": "Build once with `npm run mcp:build`, then configure your MCP client to run the server below with POTATO_BOX_API_TOKEN.",
+        "mcpPathUnavailable": "MCP server entry was not found. Run `npm run mcp:build` from the potato box repository, then reopen Settings.",
         "token": "Access token",
-        "tokenHint": "Required unless unauthenticated access is enabled. Send as `Authorization: Bearer <token>` or `X-LLM-Wiki-Token: <token>`. The environment variable LLM_WIKI_API_TOKEN overrides this field if set.",
+        "tokenHint": "Required for every API and clipper request. Send as `Authorization: Bearer <token>` or `X-Potato-Box-Token: <token>`. The environment variable POTATO_BOX_API_TOKEN overrides this field if set.",
         "tokenPlaceholder": "Paste an existing token or click Generate",
         "generate": "Generate new token",
         "show": "Show",
@@ -505,25 +563,22 @@
         "copy": "Copy",
         "copied": "Copied",
         "tokenMissing": "No token — every endpoint will return 401",
-        "tokenUnused": "Token is not used while unauthenticated access is enabled",
-        "envTokenActive": "LLM_WIKI_API_TOKEN is active and overrides this field",
+        "envTokenActive": "POTATO_BOX_API_TOKEN is active and overrides this field",
         "tokenWeak": "Token is short — consider Generate for 256-bit entropy",
         "saveFirst": "Save settings to apply API/MCP changes",
         "saveFirstExample": "Save settings first, then copy an example request.",
-        "tokenWarning": "Keep this token secret. Anyone with the token on this machine can read your project files via localhost.",
-        "tokenQueryWarning": "Prefer the Authorization header — passing ?token=… via URL leaks the value into shell history, logs, and Referer headers.",
+        "tokenWarning": "Keep this token secret. Anyone with the token on this machine can read project data through localhost. URL query tokens are rejected.",
         "sample": "Example request",
         "endpoints": "Endpoints",
-        "endpointsHint": "Replace {id} with a project UUID, a project filesystem path, or the literal 'current'.",
+        "endpointsHint": "Replace {id} with a project UUID or the literal 'current'.",
         "endpointHealthNote": "Liveness probe. No auth.",
-        "endpointProjectsNote": "List known projects with their IDs and paths.",
+        "endpointProjectsNote": "List known projects with UUIDs and current-project status.",
         "endpointFilesNote": "?root=wiki|sources|all; ?recursive=false; ?maxFiles=N (≤10000).",
         "endpointContentNote": "?path=wiki/index.md — text files only, 2 MB max.",
         "endpointReviewsNote": "?status=unresolved|resolved|all; ?type=missing-page; ?limit=N. Defaults to unresolved Review items.",
         "endpointSearchNote": "JSON body: { query, topK?, includeContent?, queryEmbedding? }. Uses shared keyword + vector retrieval when embeddings are configured.",
         "endpointGraphNote": "?q=…&nodeType=…&limit=N — wikilinks graph derived from wiki/*.md.",
-        "endpointRescanNote": "Triggers a backend rescan using your Source Watch config.",
-        "endpointChatNote": "Not implemented yet (returns 501)."
+        "endpointRescanNote": "Triggers a backend rescan using your Source Watch config."
       },
       "output": {
         "title": "Output Preferences",
@@ -588,7 +643,6 @@
         "clipServer": "Clip Server",
         "apiServer": "API Server",
         "apiDisabled": "disabled",
-        "apiOpen": "running (no auth)",
         "apiNoToken": "running (no token)",
         "updateCheck": "Update Check",
         "lastChecked": "Last checked",
@@ -601,7 +655,12 @@
         "openDownload": "Open download page",
         "later": "Later",
         "autoCheck": "Check for updates automatically on startup (at most once every 6 hours)",
-        "appDescription": "An LLM-driven personal knowledge base. Source:"
+        "updateChannelUnavailable": "This build does not have a release update channel configured.",
+        "appDescription": "A local-first AI workspace for inspectable knowledge bases.",
+        "sourceLabel": "Source:",
+        "legalTitle": "Legal notices",
+        "modifiedWork": "Modified in 2026 from {{upstream}}.",
+        "licenseNotice": "Distributed under GNU GPL v3.0, without warranty. The complete terms and notices are bundled in LICENSE and NOTICE."
       },
       "mineru": {
         "title": "MinerU PDF Parser",

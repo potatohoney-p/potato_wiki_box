@@ -62,3 +62,16 @@ export function isAbsolutePath(p: string): boolean {
   if (p.startsWith("\\\\") || p.startsWith("//")) return true
   return false
 }
+
+/** True when candidate is the base path itself or a descendant segment. */
+export function isPathWithinBase(candidate: string, basePath: string): boolean {
+  if (normalizePath(candidate).split("/").some((segment) => segment === "..")) return false
+  let candidatePath = normalizePath(candidate).replace(/\/+$/, "")
+  let base = normalizePath(basePath).replace(/\/+$/, "")
+  const windowsStyle = /^[A-Za-z]:\//.test(candidatePath) || /^[A-Za-z]:\//.test(base)
+  if (windowsStyle) {
+    candidatePath = candidatePath.toLowerCase()
+    base = base.toLowerCase()
+  }
+  return candidatePath === base || candidatePath.startsWith(`${base}/`)
+}

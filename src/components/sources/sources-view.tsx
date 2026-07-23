@@ -18,6 +18,7 @@ import {
   importSourceFiles,
   importSourceFolder,
 } from "@/lib/source-lifecycle"
+import { isDesktopRuntimeUnavailable, selectDirectory } from "@/lib/native-dialog"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -140,6 +141,9 @@ export function SourcesView() {
     try {
       await importSourceFiles(project, paths, llmConfig, sourceWatchConfig)
       await loadSources()
+    } catch (err) {
+      console.error("Failed to import source files:", err)
+      window.alert(`Could not import source files: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setImporting(false)
     }
@@ -147,20 +151,18 @@ export function SourcesView() {
 
   async function handleImportFolder() {
     if (!project) return
-
-    const selected = await open({
-      directory: true,
-      title: t("sources.importSourceFolder"),
-    })
-
-    if (!selected || typeof selected !== "string") return
-
-    setImporting(true)
     try {
+      const selected = await selectDirectory({ title: t("sources.importSourceFolder") })
+      if (!selected) return
+      setImporting(true)
       await importSourceFolder(project, selected, llmConfig, sourceWatchConfig)
       await loadSources()
     } catch (err) {
       console.error(`Failed to import folder:`, err)
+      const message = isDesktopRuntimeUnavailable(err)
+        ? t("nativeRuntime.desktopRequired")
+        : err instanceof Error ? err.message : String(err)
+      window.alert(`Could not import source folder: ${message}`)
     } finally {
       setImporting(false)
     }
@@ -251,6 +253,7 @@ export function SourcesView() {
       await enqueueSourceIngest(project, [node.path], llmConfig)
     } catch (err) {
       console.error("Failed to enqueue ingest:", err)
+      window.alert(err instanceof Error ? err.message : String(err))
     } finally {
       setIngestingPath(null)
     }

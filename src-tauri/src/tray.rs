@@ -13,21 +13,18 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
 }
 
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show LLM Wiki", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit LLM Wiki", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show potato box", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit potato box", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("main")
-        .tooltip("LLM Wiki")
+        .tooltip("potato box")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main_window(app),
             "quit" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.destroy();
-                }
-                app.exit(0);
+                let _ = crate::request_graceful_quit(app);
             }
             _ => {}
         })

@@ -5,7 +5,27 @@
  * into a single `-YYYY-MM-DD.md`. These tests pin the new policy.
  */
 import { describe, it, expect } from "vitest"
-import { makeQuerySlug, makeQueryFileName } from "./wiki-filename"
+import { deriveQueryTitle, makeQuerySlug, makeQueryFileName } from "./wiki-filename"
+
+describe("deriveQueryTitle", () => {
+  it("removes wikilink markup before using a title as a wikilink alias", () => {
+    expect(
+      deriveQueryTitle("[[model-gateway]] routes [[deepseek|DeepSeek]] requests."),
+    ).toBe("model-gateway routes DeepSeek requests.")
+  })
+
+  it("removes common Markdown wrappers and unsafe alias delimiters", () => {
+    expect(deriveQueryTitle("## **Search** [roadmap](https://example.com) | v2"))
+      .toBe("Search roadmap v2")
+  })
+
+  it("uses the first real content line and truncates by Unicode code point", () => {
+    expect(deriveQueryTitle("<!-- sources: hidden -->\n\n# " + "가".repeat(80)))
+      .toBe("가".repeat(60))
+    expect(deriveQueryTitle("\n<!-- hidden -->\n", "Fallback title"))
+      .toBe("Fallback title")
+  })
+})
 
 describe("makeQuerySlug", () => {
   it("ASCII title is lowercased and hyphenated", () => {

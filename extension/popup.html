@@ -1,155 +1,170 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>potato box Clipper</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * { box-sizing: border-box; }
     html, body {
-      width: 480px;
-      height: 500px;
-      max-height: 500px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 13px;
-      color: #1a1a2e;
-      background: #fafafa;
-      overflow: hidden !important;
+      width: 460px;
+      min-height: 520px;
+      margin: 0;
+      font: 13px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17211b;
+      background: #f7f8f6;
     }
+    button, input, select { font: inherit; }
     .header {
-      padding: 12px 16px;
-      background: #1a1a2e;
-      color: white;
+      min-height: 52px;
+      padding: 0 16px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
+      border-bottom: 1px solid #dfe4df;
+      background: #ffffff;
     }
-    .header h1 { font-size: 14px; font-weight: 600; }
-    .header .icon { font-size: 18px; }
-    .content { padding: 12px 16px; }
+    .brand { display: flex; align-items: center; gap: 9px; }
+    .mark {
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      color: #ffffff;
+      background: #26734d;
+      font-weight: 800;
+    }
+    h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: 0; }
+    .link-button {
+      padding: 4px 0;
+      border: 0;
+      color: #476052;
+      background: transparent;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    main { padding: 14px 16px 16px; }
     .status {
-      padding: 8px 12px;
+      min-height: 34px;
+      margin-bottom: 12px;
+      padding: 8px 10px;
+      border: 1px solid transparent;
       border-radius: 6px;
       font-size: 12px;
-      margin-bottom: 10px;
     }
-    .status.connected { background: #ecfdf5; color: #065f46; }
-    .status.disconnected { background: #fef2f2; color: #991b1b; }
-    .status.sending { background: #eff6ff; color: #1e40af; }
-    .status.success { background: #ecfdf5; color: #065f46; }
-    .status.error { background: #fef2f2; color: #991b1b; }
-    .field { margin-bottom: 8px; }
-    .field label {
-      display: block;
-      font-size: 11px;
-      font-weight: 600;
-      color: #6b7280;
-      text-transform: uppercase;
-      margin-bottom: 3px;
-    }
-    .field input, .field select {
-      width: 100%;
-      padding: 6px 8px;
-      border: 1px solid #e5e7eb;
+    .status.connected, .status.success { border-color: #b7d9c7; color: #185c3b; background: #edf8f1; }
+    .status.disconnected { border-color: #d9dedb; color: #526159; background: #f0f2f0; }
+    .status.sending { border-color: #b9cddd; color: #274f6b; background: #eef5fa; }
+    .status.error { border-color: #edc5c2; color: #8e2925; background: #fff1f0; }
+    .token-panel {
+      margin: -4px 0 12px;
+      padding: 12px;
+      border: 1px solid #dfe4df;
       border-radius: 6px;
-      font-size: 13px;
-      font-family: inherit;
-      outline: none;
-      background: white;
+      background: #ffffff;
     }
-    .field input:focus, .field select:focus {
-      border-color: #6366f1;
-      box-shadow: 0 0 0 2px rgba(99,102,241,0.1);
-    }
-    .field select { cursor: pointer; }
-    .url-preview {
-      padding: 4px 8px;
-      background: #f3f4f6;
-      border-radius: 4px;
+    .token-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .field { margin-bottom: 10px; }
+    label {
+      display: block;
+      margin-bottom: 4px;
+      color: #526159;
       font-size: 11px;
-      color: #6b7280;
-      white-space: nowrap;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    input, select {
+      width: 100%;
+      min-height: 34px;
+      padding: 6px 9px;
+      border: 1px solid #cfd7d1;
+      border-radius: 5px;
+      color: #17211b;
+      background: #ffffff;
+      outline: none;
+    }
+    input:focus, select:focus { border-color: #26734d; box-shadow: 0 0 0 2px rgba(38, 115, 77, 0.14); }
+    .secondary-button {
+      min-height: 34px;
+      padding: 6px 12px;
+      border: 1px solid #26734d;
+      border-radius: 5px;
+      color: #ffffff;
+      background: #26734d;
+      cursor: pointer;
+    }
+    .url-preview {
+      min-height: 28px;
+      padding: 5px 8px;
       overflow: hidden;
+      border: 1px solid #e1e5e2;
+      border-radius: 5px;
+      color: #65726a;
+      background: #f1f3f1;
       text-overflow: ellipsis;
+      white-space: nowrap;
     }
     #contentPreview {
+      height: 180px;
       padding: 10px;
-      background: #f3f4f6;
-      border: 1px solid #e5e7eb;
-      border-radius: 6px;
-      font-size: 12px;
-      color: #374151;
-      line-height: 1.6;
-      max-height: 260px;
       overflow-y: auto;
+      border: 1px solid #dfe4df;
+      border-radius: 5px;
+      color: #344239;
+      background: #ffffff;
+      line-height: 1.55;
       white-space: pre-wrap;
       word-break: break-word;
     }
-    #contentPreview::-webkit-scrollbar { width: 8px; }
-    #contentPreview::-webkit-scrollbar-track { background: #f3f4f6; border-radius: 0 6px 6px 0; }
-    #contentPreview::-webkit-scrollbar-thumb { background: #c5c5c5; border-radius: 4px; }
-    #contentPreview::-webkit-scrollbar-thumb:hover { background: #999; }
-    .btn {
+    .primary-button {
       width: 100%;
-      padding: 10px;
-      border: none;
+      min-height: 40px;
+      margin-top: 2px;
+      border: 0;
       border-radius: 6px;
-      font-size: 13px;
-      font-weight: 600;
+      color: #ffffff;
+      background: #26734d;
+      font-weight: 700;
       cursor: pointer;
-      transition: all 0.15s;
-      margin-top: 10px;
     }
-    .btn-primary { background: #4f46e5; color: white; }
-    .btn-primary:hover { background: #4338ca; }
-    .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
-    .footer {
-      padding: 6px 16px;
-      border-top: 1px solid #e5e7eb;
-      font-size: 10px;
-      color: #9ca3af;
-      text-align: center;
-    }
+    .primary-button:hover:not(:disabled), .secondary-button:hover { background: #1d603e; }
+    .primary-button:disabled { color: #7b8880; background: #dce1dd; cursor: not-allowed; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <span class="icon">📚</span>
-    <h1>LLM Wiki Clipper</h1>
-  </div>
-
-  <div class="content">
-    <div id="statusBar" class="status disconnected">Checking connection...</div>
-
+  <header class="header">
+    <div class="brand"><span class="mark" aria-hidden="true">P</span><h1>potato box Clipper</h1></div>
+    <button id="changeTokenBtn" class="link-button" type="button" hidden>Change token</button>
+  </header>
+  <main>
+    <div id="statusBar" class="status disconnected" role="status">Connecting...</div>
+    <section id="tokenPanel" class="token-panel" hidden>
+      <label for="tokenInput">API token</label>
+      <div class="token-row">
+        <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="pbx_...">
+        <button id="saveTokenBtn" class="secondary-button" type="button">Connect</button>
+      </div>
+    </section>
     <div class="field">
-      <label>Save to Project</label>
-      <select id="projectSelect">
-        <option value="">Loading projects...</option>
-      </select>
+      <label for="projectSelect">Project</label>
+      <select id="projectSelect"><option value="">Loading projects...</option></select>
     </div>
-
     <div class="field">
-      <label>Title</label>
-      <input type="text" id="titleInput" placeholder="Page title">
+      <label for="titleInput">Title</label>
+      <input id="titleInput" type="text" maxlength="500" placeholder="Page title">
     </div>
-
     <div class="field">
       <label>URL</label>
-      <div class="url-preview" id="urlPreview">—</div>
+      <div id="urlPreview" class="url-preview">Loading...</div>
     </div>
-
     <div class="field">
-      <label>Content Preview</label>
-      <div id="contentPreview">Extracting content...</div>
+      <label>Content preview</label>
+      <div id="contentPreview">Extracting page...</div>
     </div>
-
-    <button class="btn btn-primary" id="clipBtn" disabled>
-      📎 Clip to Wiki
-    </button>
-  </div>
-
-  <div class="footer">
-    Content will be saved and auto-ingested into your wiki
-  </div>
-
+    <button id="clipBtn" class="primary-button" type="button" disabled>Extracting page</button>
+  </main>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -16,6 +16,13 @@ describe("getAppLayoutVisibility", () => {
     })
   })
 
+  it("keeps knowledge health as a standalone view", () => {
+    expect(getAppLayoutVisibility("health", true)).toEqual({
+      showLeftPanel: false,
+      hasRightPanel: false,
+    })
+  })
+
   it("shows the project side panel and optional research panel in workspace views", () => {
     expect(getAppLayoutVisibility("wiki", false)).toEqual({
       showLeftPanel: true,

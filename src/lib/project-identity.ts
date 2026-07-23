@@ -7,18 +7,20 @@
  * via the registry at run time, so a moved folder doesn't orphan tasks.
  *
  * Storage:
- * - Per-project identity: `{project}/.llm-wiki/project.json`
+ * - Per-project identity: `{project}/.potato-box/project.json`
  *     `{ "id": "<uuid>", "createdAt": <ms> }`
  * - Global registry: Tauri plugin-store `app-state.json` key `projectRegistry`
  *     `{ [id]: { id, path, name, lastOpened } }`
  */
 
 import { load } from "@tauri-apps/plugin-store"
-import { readFile, writeFile } from "@/commands/fs"
+import { fileExists, readFile, writeFileAtomic } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 
 const STORE_NAME = "app-state.json"
 const REGISTRY_KEY = "projectRegistry"
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const pendingIdentityRequests = new Map<string, Promise<string>>()
 
 export interface ProjectIdentity {
   id: string
@@ -34,37 +36,63 @@ export interface ProjectRegistryEntry {
 
 export type ProjectRegistry = Record<string, ProjectRegistryEntry>
 
-// ── Per-project identity (reads/creates `.llm-wiki/project.json`) ─────────
+// ── Per-project identity (reads/creates `.potato-box/project.json`) ───────
 
 function identityPath(projectPath: string): string {
-  return `${normalizePath(projectPath)}/.llm-wiki/project.json`
+  return `${normalizePath(projectPath)}/.potato-box/project.json`
 }
 
 /**
  * Return the project's stable UUID. Generates + writes one on first call
- * for a project that doesn't have `.llm-wiki/project.json` yet.
+ * for a project that doesn't have `.potato-box/project.json` yet.
  */
-export async function ensureProjectId(projectPath: string): Promise<string> {
+export function ensureProjectId(projectPath: string): Promise<string> {
   const path = identityPath(projectPath)
+  const pending = pendingIdentityRequests.get(path)
+  if (pending) return pending
+
+  const request = ensureProjectIdAtPath(path).finally(() => {
+    if (pendingIdentityRequests.get(path) === request) {
+      pendingIdentityRequests.delete(path)
+    }
+  })
+  pendingIdentityRequests.set(path, request)
+  return request
+}
+
+async function ensureProjectIdAtPath(path: string): Promise<string> {
+  const exists = await fileExists(path)
+  if (!exists) {
+    const identity: ProjectIdentity = {
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+    }
+    await writeFileAtomic(path, JSON.stringify(identity, null, 2))
+    return identity.id
+  }
+
+  let raw: string
   try {
-    const raw = await readFile(path)
+    raw = await readFile(path)
+  } catch (error) {
+    throw new Error(
+      `Project identity exists but cannot be read at ${path}. The file was left untouched: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  try {
     const parsed = JSON.parse(raw) as ProjectIdentity
-    if (parsed?.id && typeof parsed.id === "string") {
+    if (typeof parsed?.id === "string" && UUID_RE.test(parsed.id)) {
       return parsed.id
     }
-  } catch {
-    // missing or corrupt — fall through to create
+  } catch (error) {
+    throw new Error(
+      `Project identity is malformed at ${path}. Recover this file from backup before opening the project: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
-  const identity: ProjectIdentity = {
-    id: crypto.randomUUID(),
-    createdAt: Date.now(),
-  }
-  try {
-    await writeFile(path, JSON.stringify(identity, null, 2))
-  } catch (err) {
-    console.warn("[project-identity] failed to write identity file:", err)
-  }
-  return identity.id
+  throw new Error(
+    `Project identity contains an invalid UUID at ${path}. The file was left untouched; recover it from backup before opening the project.`,
+  )
 }
 
 // ── Global registry (Tauri plugin-store) ──────────────────────────────────

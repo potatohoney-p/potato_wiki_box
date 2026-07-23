@@ -15,7 +15,10 @@ export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+      graphology: path.resolve(__dirname, "node_modules/graphology/dist/graphology.esm.js"),
+    },
   },
 
   define: {

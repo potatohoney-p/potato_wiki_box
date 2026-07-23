@@ -1,0 +1,19 @@
+potato box
+Copyright (C) 2026 potato box contributors
+
+This distribution is a modified work based on LLM Wiki,
+Copyright (C) 2024-2026 Yong Su.
+
+Upstream source:
+https://github.com/nashsu/llm_wiki
+
+The combined work is distributed under the GNU General Public License,
+version 3 only. The complete license,
+including the preserved upstream copyright notice, is in LICENSE.
+
+The general pattern of using an LLM to incrementally maintain a personal
+wiki was also described by Andrej Karpathy:
+https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
+
+Third-party packages and binary components remain under their respective
+licenses. Refer to package manifests, lockfiles, and bundled license files.

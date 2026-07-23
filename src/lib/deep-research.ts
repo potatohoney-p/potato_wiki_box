@@ -5,6 +5,7 @@ import { autoIngest, currentWikiDate } from "./ingest"
 import { writeFile, readFile, listDirectory } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
+import { useReviewStore } from "@/stores/review-store"
 import { normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 import { makeQueryFileName } from "@/lib/wiki-filename"
@@ -42,9 +43,10 @@ export function queueResearch(
   llmConfig: LlmConfig,
   searchConfig: SearchApiConfig,
   searchQueries?: string[],
+  reviewId?: string,
 ): string {
   const store = useResearchStore.getState()
-  const taskId = store.addTask(topic)
+  const taskId = store.addTask(topic, reviewId)
   // Store search queries on the task
   if (searchQueries && searchQueries.length > 0) {
     store.updateTask(taskId, { searchQueries })
@@ -308,6 +310,13 @@ async function executeResearch(
       status: "done",
       savedPath,
     })) return
+    const completedTask = useResearchStore.getState().tasks.find((task) => task.id === taskId)
+    if (completedTask?.reviewId) {
+      useReviewStore.getState().resolveItem(
+        completedTask.reviewId,
+        `Research saved to ${savedPath}`,
+      )
+    }
 
     // Refresh tree
     try {

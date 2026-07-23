@@ -22,7 +22,7 @@
  * logo hundreds of times.
  *
  * Cache file lives at
- *   `<project>/.llm-wiki/image-caption-cache.json`
+ *   `<project>/.potato-box/image-caption-cache.json`
  * keyed `{ "<sha256>": { caption, mimeType, model, capturedAt } }`.
  * The model + capturedAt fields aren't read by anything yet but
  * shipping the metadata now means we can implement Phase 4's
@@ -48,7 +48,7 @@ interface CaptionEntry {
 
 type CaptionCache = Record<string, CaptionEntry>
 
-const CACHE_REL_PATH = ".llm-wiki/image-caption-cache.json"
+const CACHE_REL_PATH = ".potato-box/image-caption-cache.json"
 
 /**
  * Compute SHA-256 of a base64 string by decoding to bytes first
@@ -112,9 +112,9 @@ async function readCache(projectPath: string): Promise<CaptionCache> {
 async function writeCache(projectPath: string, cache: CaptionCache): Promise<void> {
   const pp = normalizePath(projectPath)
   const cachePath = `${pp}/${CACHE_REL_PATH}`
-  // `.llm-wiki/` may not exist on a fresh project — create_directory
+  // `.potato-box/` may not exist on a fresh project — create_directory
   // is idempotent and chains parents.
-  await createDirectory(`${pp}/.llm-wiki`)
+  await createDirectory(`${pp}/.potato-box`)
   // Pretty-print at 2 spaces. Cache files end up in user backups
   // and source control sometimes; readability outweighs the small
   // size penalty.
@@ -230,7 +230,7 @@ function sliceContext(
  *   — 2 failed" type info.
  *
  * Returns the rewritten markdown. The caption cache file at
- * `<project>/.llm-wiki/image-caption-cache.json` is updated as a
+ * `<project>/.potato-box/image-caption-cache.json` is updated as a
  * side-effect (atomically at the end, NOT per image — partial
  * writes don't persist if the user cancels mid-batch).
  *

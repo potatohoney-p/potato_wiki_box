@@ -12,8 +12,10 @@
  *
  * Convention we settle on:
  *
- *   - Any src starting with `http://`, `https://`, `data:`, `blob:`,
- *     `file:`, `tauri://` is passed through unchanged.
+ *   - Remote HTTP(S), app-created `blob:`, and a small allowlist of
+ *     raster `data:` image URLs are passed through unchanged.
+ *   - Local URL schemes (`file:`, `tauri:`, `asset:`), unsafe data
+ *     payloads, and project-external local paths are rejected.
  *   - Any src starting with `/` (absolute) is wrapped with
  *     `convertFileSrc` directly — the path is the filesystem
  *     absolute path.
@@ -37,14 +39,18 @@
 import { convertFileSrc } from "@tauri-apps/api/core"
 import { normalizePath } from "@/lib/path-utils"
 
-const PASSTHROUGH_RE = /^(https?:|data:|blob:|file:|tauri:)/i
+const SAFE_PASSTHROUGH_RE = /^(https?:|blob:)/i
+const SAFE_DATA_IMAGE_RE = /^data:image\/(?:png|jpe?g|gif|webp|bmp|avif);base64,/i
+const BLOCKED_SCHEME_RE = /^(?:file|tauri|asset|javascript|vbscript):/i
 
 function trimTrailingSlash(path: string): string {
   return path.replace(/\/+$/, "")
 }
 
 function comparePath(path: string): string {
-  return /^[a-zA-Z]:/.test(path) ? path.toLowerCase() : path
+  return /^[a-zA-Z]:/.test(path) || path.startsWith("//")
+    ? path.toLowerCase()
+    : path
 }
 
 function isInsideProject(path: string, projectPath: string): boolean {
@@ -68,7 +74,8 @@ function decodePathSrc(src: string): string {
  * references should degrade gracefully, not crash the renderer.
  */
 function collapsePath(p: string): string {
-  const isAbsolute = p.startsWith("/")
+  const prefix = p.startsWith("//") ? "//" : p.startsWith("/") ? "/" : ""
+  const isAbsolute = prefix.length > 0
   const out: string[] = []
   for (const seg of p.split("/")) {
     if (seg === "" || seg === ".") continue
@@ -80,7 +87,7 @@ function collapsePath(p: string): string {
       out.push(seg)
     }
   }
-  return (isAbsolute ? "/" : "") + out.join("/")
+  return prefix + out.join("/")
 }
 
 /**
@@ -100,7 +107,9 @@ export function resolveMarkdownImageSrc(
   currentFileDir?: string | null,
 ): string {
   if (!rawSrc) return rawSrc
-  if (PASSTHROUGH_RE.test(rawSrc)) return rawSrc
+  if (BLOCKED_SCHEME_RE.test(rawSrc)) return ""
+  if (/^data:/i.test(rawSrc)) return SAFE_DATA_IMAGE_RE.test(rawSrc) ? rawSrc : ""
+  if (SAFE_PASSTHROUGH_RE.test(rawSrc)) return rawSrc
 
   if (!projectPath) return rawSrc
 
@@ -113,10 +122,10 @@ export function resolveMarkdownImageSrc(
   // this intentionally trades off rendering arbitrary external local images
   // for a single safe rule: markdown cannot turn into a project-external local
   // file read through Tauri's asset server. External web URLs still pass
-  // through via PASSTHROUGH_RE above.
+  // through via SAFE_PASSTHROUGH_RE above.
   if (isAbsolute) {
     const absolute = collapsePath(normalizePath(decodePathSrc(rawSrc)))
-    return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : rawSrc
+    return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : ""
   }
 
   // Strip a leading `./` for cleanliness; treat `media/foo.png` and
@@ -163,7 +172,7 @@ export function resolveMarkdownImageSrc(
       dir.startsWith("/") || /^[a-zA-Z]:/.test(dir) || dir.startsWith("\\\\")
     const baseDir = dirIsAbsolute ? dir : `${pp}/${dir}`
     const absolute = collapsePath(`${baseDir.replace(/\/+$/, "")}/${cleaned}`)
-    return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : rawSrc
+    return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : ""
   }
 
   // Fallback: resolve as wiki-root-relative. Image references in
@@ -171,5 +180,5 @@ export function resolveMarkdownImageSrc(
   // so the path is stable regardless of page depth, and callers
   // without a file context (chat replies) rely on it too.
   const absolute = collapsePath(`${pp}/wiki/${wikiRootMediaPath}`)
-  return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : rawSrc
+  return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : ""
 }

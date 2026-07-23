@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LLM Wiki",
+  "productName": "potato box",
   "version": "0.4.24",
-  "identifier": "com.llmwiki.app",
+  "identifier": "com.potatobox.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "LLM Wiki",
+        "title": "potato box",
         "width": 1200,
         "height": 800,
         "resizable": true,
@@ -25,13 +25,18 @@
       "csp": "default-src 'self'; connect-src 'self' https: http:; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost https://asset.localhost; style-src 'self' 'unsafe-inline'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": []
       }
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../mcp-server/dist/index.js": "mcp-server/dist/index.js",
+      "../mcp-server/package.json": "mcp-server/package.json",
+      "../mcp-server/LICENSE": "mcp-server/LICENSE"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

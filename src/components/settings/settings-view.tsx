@@ -161,7 +161,6 @@ function initialDraft(
     mineruToken: mineru.token,
     mineruModelVersion: mineru.modelVersion,
     apiEnabled: apiConfig.enabled,
-    apiAllowUnauthenticated: apiConfig.allowUnauthenticated,
     apiMcpEnabled: apiConfig.mcpEnabled,
     apiToken: apiConfig.token,
     autostart: generalConfig.autostart,
@@ -399,7 +398,6 @@ export function SettingsView() {
     }
     const newApiConfig = {
       enabled: draft.apiEnabled,
-      allowUnauthenticated: draft.apiAllowUnauthenticated,
       mcpEnabled: draft.apiMcpEnabled,
       token: draft.apiToken.trim(),
     }

@@ -8,19 +8,19 @@ vi.mock("./llm-client", () => ({
   streamChat: vi.fn(),
 }))
 vi.mock("@/commands/fs", () => ({
-  readFile: vi.fn(),
+  readTextFileLimited: vi.fn(),
   writeFile: vi.fn(),
   listDirectory: vi.fn(),
 }))
 
 import { runSemanticLint, runStructuralLint } from "./lint"
 import { streamChat } from "./llm-client"
-import { readFile, listDirectory } from "@/commands/fs"
+import { readTextFileLimited, listDirectory } from "@/commands/fs"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useActivityStore } from "@/stores/activity-store"
 
 const mockStreamChat = vi.mocked(streamChat)
-const mockReadFile = vi.mocked(readFile)
+const mockReadFile = vi.mocked(readTextFileLimited)
 const mockListDirectory = vi.mocked(listDirectory)
 
 function fakeLlmConfig(): LlmConfig {
@@ -154,6 +154,21 @@ describe("runSemanticLint — activity & early returns", () => {
 })
 
 describe("runStructuralLint — link suggestions", () => {
+  it("uses system-page links without reporting system pages as orphans", async () => {
+    const pages = [
+      makeFileNode("overview.md", "# Overview"),
+      makeFileNode("index.md", "# Index\n[[topic]]"),
+      makeFileNode("topic.md", "# Topic\n[[overview]]"),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((page) => page.node))
+    mockReadFile.mockImplementation(async (path) => {
+      const match = pages.find((page) => page.node.path === path)
+      return match?.content ?? ""
+    })
+
+    expect(await runStructuralLint("/project")).toEqual([])
+  })
+
   it("suggests the closest existing page for a broken wikilink", async () => {
     const pages = [
       makeFileNode("transformer.md", "---\ntitle: Transformer\n---\n# Transformer\nAttention model."),

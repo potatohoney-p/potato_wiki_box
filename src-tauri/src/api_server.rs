@@ -78,6 +78,16 @@ pub fn start_api_server(app: AppHandle) {
         for request in server.incoming_requests() {
             let method = request.method().clone();
             let url = request.url().to_string();
+            let origin = request_origin(&request);
+            if !origin_is_allowed(origin.as_deref()) {
+                respond_json(
+                    request,
+                    403,
+                    json!({ "ok": false, "error": "Browser origin is not allowed" }),
+                    None,
+                );
+                continue;
+            }
             if should_rate_limit(&method, &url) && !allow_request() {
                 respond_error(request, 429, "Too many requests");
                 continue;
@@ -150,11 +160,6 @@ fn try_acquire_request_slot() -> Option<RequestSlot> {
 fn process_request(app: AppHandle, mut request: tiny_http::Request) {
     let method = request.method().clone();
     let url = request.url().to_string();
-    if method == Method::Options {
-        respond_options(request);
-        return;
-    }
-
     let headers: Vec<(String, String)> = request
         .headers()
         .iter()
@@ -165,13 +170,36 @@ fn process_request(app: AppHandle, mut request: tiny_http::Request) {
             )
         })
         .collect();
+    let origin = request_origin(&request);
+    if !origin_is_allowed(origin.as_deref()) {
+        respond_json(
+            request,
+            403,
+            json!({ "ok": false, "error": "Browser origin is not allowed" }),
+            None,
+        );
+        return;
+    }
+    if method == Method::Options {
+        respond_options(request, origin.as_deref());
+        return;
+    }
 
-    let body = match read_body(&mut request) {
-        Ok(body) => body,
-        Err(err) => {
-            respond_error(request, 400, &err);
-            return;
+    let body = if method == Method::Post {
+        match read_body(&mut request) {
+            Ok(body) => body,
+            Err(err) => {
+                let status = if err == "Request body too large" {
+                    413
+                } else {
+                    400
+                };
+                respond_error(request, status, &err);
+                return;
+            }
         }
+    } else {
+        String::new()
     };
 
     let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -181,7 +209,7 @@ fn process_request(app: AppHandle, mut request: tiny_http::Request) {
         eprintln!("[API Server] request panicked: {payload:?}");
         err(500, "Internal API server error")
     });
-    respond_json(request, response.status, response.body);
+    respond_json(request, response.status, response.body, origin.as_deref());
 }
 
 struct ApiResponse {
@@ -209,6 +237,9 @@ fn handle_request(
 ) -> ApiResponse {
     let (path, query) = split_url(url);
     if path == "/health" || path == format!("{API_PREFIX}/health") {
+        if method != &Method::Get {
+            return err(405, "Method not allowed");
+        }
         // /health stays reachable even when the user has disabled the
         // API in Settings — the desktop UI uses it to render the
         // "Enabled / disabled / port_conflict" line, and curl-from-
@@ -218,12 +249,11 @@ fn handle_request(
             "ok": true,
             "status": get_api_status(),
             "version": env!("CARGO_PKG_VERSION"),
-            "authRequired": api_auth_required(app),
+            "authRequired": true,
             "authConfigured": api_token(app).is_some(),
             "tokenSource": api_token_source(app),
             "enabled": api_enabled(app),
             "mcpEnabled": api_mcp_enabled(app),
-            "allowUnauthenticated": api_allow_unauthenticated(app),
         }));
     }
     if !path.starts_with(API_PREFIX) {
@@ -237,7 +267,7 @@ fn handle_request(
         // retry instantly the way 401 would.
         return err(503, "API server is disabled in Settings → API Server");
     }
-    if !is_authorized(app, query, headers) {
+    if !is_authorized(app, headers) {
         return err(401, "Unauthorized");
     }
     if !matches!(method, &Method::Get | &Method::Post) {
@@ -264,10 +294,6 @@ fn handle_request(
         (&Method::Get, ["projects", project_id, "graph"]) => handle_graph(app, project_id, query),
         (&Method::Post, ["projects", project_id, "sources", "rescan"]) => {
             handle_rescan(app, project_id)
-        }
-        (&Method::Post, ["projects", project_id, "chat"]) => {
-            let _ = project_id;
-            err(501, "Chat API is not implemented in the local Rust API server yet. The existing chat/RAG pipeline currently lives in the WebView; expose it after moving the shared chat pipeline behind a backend command.")
         }
         _ => err(404, "Not found"),
     }
@@ -311,37 +337,74 @@ fn read_body(request: &mut tiny_http::Request) -> Result<String, String> {
 }
 
 fn respond_error(request: tiny_http::Request, status: u16, message: &str) {
-    respond_json(request, status, json!({ "ok": false, "error": message }));
+    let origin = request_origin(&request);
+    let response_origin = origin
+        .as_deref()
+        .filter(|candidate| origin_is_allowed(Some(candidate)));
+    respond_json(
+        request,
+        status,
+        json!({ "ok": false, "error": message }),
+        response_origin,
+    );
 }
 
-fn respond_options(request: tiny_http::Request) {
+fn respond_options(request: tiny_http::Request, origin: Option<&str>) {
     let mut response = Response::empty(StatusCode(204));
-    for header in cors_headers() {
+    for header in response_headers(origin) {
         response.add_header(header);
     }
     response.add_header(Header::from_bytes("Access-Control-Max-Age", "600").unwrap());
     let _ = request.respond(response);
 }
 
-fn respond_json(request: tiny_http::Request, status: u16, body: Value) {
+fn respond_json(request: tiny_http::Request, status: u16, body: Value, origin: Option<&str>) {
     let mut response = Response::from_string(body.to_string()).with_status_code(StatusCode(status));
-    for header in cors_headers() {
+    for header in response_headers(origin) {
         response.add_header(header);
     }
     let _ = request.respond(response);
 }
 
-fn cors_headers() -> Vec<Header> {
-    vec![
-        Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
+fn request_origin(request: &tiny_http::Request) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Origin"))
+        .map(|header| header.value.as_str().trim().to_string())
+}
+
+fn origin_is_allowed(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true;
+    };
+    matches!(
+        origin,
+        "http://tauri.localhost"
+            | "https://tauri.localhost"
+            | "tauri://localhost"
+            | "http://localhost:1420"
+            | "http://127.0.0.1:1420"
+    )
+}
+
+fn response_headers(origin: Option<&str>) -> Vec<Header> {
+    let mut headers = vec![
         Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS").unwrap(),
         Header::from_bytes(
             "Access-Control-Allow-Headers",
-            "Content-Type, Authorization, X-LLM-Wiki-Token",
+            "Content-Type, Authorization, X-Potato-Box-Token",
         )
         .unwrap(),
         Header::from_bytes("Content-Type", "application/json").unwrap(),
-    ]
+        Header::from_bytes("Cache-Control", "no-store").unwrap(),
+        Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap(),
+    ];
+    if let Some(origin) = origin {
+        headers.push(Header::from_bytes("Access-Control-Allow-Origin", origin).unwrap());
+        headers.push(Header::from_bytes("Vary", "Origin").unwrap());
+    }
+    headers
 }
 
 fn split_url(url: &str) -> (String, &str) {
@@ -378,23 +441,12 @@ fn percent_decode(input: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn is_authorized(app: &AppHandle, query: &str, headers: &[(String, String)]) -> bool {
-    if !api_auth_required(app) {
-        return true;
-    }
+fn is_authorized(app: &AppHandle, headers: &[(String, String)]) -> bool {
     let Some(token) = api_token(app) else {
         return false;
     };
-    let params = parse_query(query);
-    if params
-        .get("token")
-        .map(|v| constant_time_eq(v.as_bytes(), token.as_bytes()))
-        .unwrap_or(false)
-    {
-        return true;
-    }
     headers.iter().any(|(key, value)| {
-        if key == "x-llm-wiki-token" {
+        if key == "x-potato-box-token" {
             return constant_time_eq(value.as_bytes(), token.as_bytes());
         }
         if key == "authorization" {
@@ -407,8 +459,8 @@ fn is_authorized(app: &AppHandle, query: &str, headers: &[(String, String)]) -> 
     })
 }
 
-fn api_token(app: &AppHandle) -> Option<String> {
-    if let Ok(token) = std::env::var("LLM_WIKI_API_TOKEN") {
+pub(crate) fn api_token(app: &AppHandle) -> Option<String> {
+    if let Ok(token) = std::env::var("POTATO_BOX_API_TOKEN") {
         let trimmed = token.trim();
         if !trimmed.is_empty() {
             return Some(trimmed.to_string());
@@ -424,7 +476,7 @@ fn api_token(app: &AppHandle) -> Option<String> {
 }
 
 fn api_token_source(app: &AppHandle) -> &'static str {
-    if let Ok(token) = std::env::var("LLM_WIKI_API_TOKEN") {
+    if let Ok(token) = std::env::var("POTATO_BOX_API_TOKEN") {
         if !token.trim().is_empty() {
             return "env";
         }
@@ -443,21 +495,6 @@ fn api_token_source(app: &AppHandle) -> &'static str {
         return "store";
     }
     "none"
-}
-
-fn api_auth_required(app: &AppHandle) -> bool {
-    !api_allow_unauthenticated(app)
-}
-
-fn api_allow_unauthenticated(app: &AppHandle) -> bool {
-    let Some(parsed) = load_app_state(app) else {
-        return false;
-    };
-    parsed
-        .get("apiConfig")
-        .and_then(|v| v.get("allowUnauthenticated"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
 }
 
 /// Whether the API server should accept non-/health requests.
@@ -538,7 +575,20 @@ struct ProjectEntry {
 
 fn handle_projects(app: &AppHandle) -> ApiResponse {
     let projects = load_projects(app);
-    let current_project = projects.iter().find(|project| project.current).cloned();
+    let projects = projects
+        .iter()
+        .map(|project| {
+            json!({
+                "id": project.id,
+                "name": project.name,
+                "current": project.current,
+            })
+        })
+        .collect::<Vec<_>>();
+    let current_project = projects
+        .iter()
+        .find(|project| project.get("current").and_then(Value::as_bool) == Some(true))
+        .cloned();
     ok(json!({
         "ok": true,
         "projects": projects,
@@ -553,6 +603,9 @@ fn load_projects(app: &AppHandle) -> Vec<ProjectEntry> {
     if let Some(parsed) = load_app_state(app) {
         if let Some(registry) = parsed.get("projectRegistry").and_then(Value::as_object) {
             for (id, value) in registry {
+                if uuid::Uuid::parse_str(id).is_err() {
+                    continue;
+                }
                 let path = value.get("path").and_then(Value::as_str).unwrap_or("");
                 if path.is_empty() {
                     continue;
@@ -568,7 +621,7 @@ fn load_projects(app: &AppHandle) -> Vec<ProjectEntry> {
                     ProjectEntry {
                         id: id.clone(),
                         name,
-                        current: path == current,
+                        current: project_paths_equal(&path, &current),
                         path,
                     },
                 );
@@ -581,47 +634,58 @@ fn load_projects(app: &AppHandle) -> Vec<ProjectEntry> {
                     continue;
                 }
                 let path = normalize_path(path);
-                by_path.entry(path.clone()).or_insert_with(|| {
-                    let id = read_project_id(&path).unwrap_or_else(|| path.clone());
-                    let name = value
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned)
-                        .unwrap_or_else(|| project_name_from_path(&path));
+                if by_path.contains_key(&path) {
+                    continue;
+                }
+                let Some(id) = read_project_id(&path) else {
+                    continue;
+                };
+                let name = value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| project_name_from_path(&path));
+                by_path.insert(
+                    path.clone(),
                     ProjectEntry {
                         id,
                         name,
-                        current: path == current,
+                        current: project_paths_equal(&path, &current),
                         path,
-                    }
-                });
+                    },
+                );
             }
         }
     }
 
     for (name, path) in clip_server::all_projects() {
         let path = normalize_path(&path);
+        let Some(id) = read_project_id(&path) else {
+            continue;
+        };
         by_path.entry(path.clone()).or_insert_with(|| ProjectEntry {
-            id: read_project_id(&path).unwrap_or_else(|| path.clone()),
+            id,
             name: if name.is_empty() {
                 project_name_from_path(&path)
             } else {
                 name
             },
-            current: path == current,
+            current: project_paths_equal(&path, &current),
             path,
         });
     }
 
     if !current.is_empty() {
-        by_path
-            .entry(current.clone())
-            .or_insert_with(|| ProjectEntry {
-                id: read_project_id(&current).unwrap_or_else(|| current.clone()),
-                name: project_name_from_path(&current),
-                current: true,
-                path: current.clone(),
-            });
+        if let Some(id) = read_project_id(&current) {
+            by_path
+                .entry(current.clone())
+                .or_insert_with(|| ProjectEntry {
+                    id,
+                    name: project_name_from_path(&current),
+                    current: true,
+                    path: current.clone(),
+                });
+        }
     }
 
     by_path.into_values().collect()
@@ -632,15 +696,11 @@ fn resolve_project(app: &AppHandle, project_id: &str) -> Result<ProjectEntry, St
     let wants_current = project_id.eq_ignore_ascii_case("current");
     load_projects(app)
         .into_iter()
-        .find(|p| {
-            p.id == project_id
-                || project_path_matches(&p.path, &project_id)
-                || (wants_current && p.current)
-        })
+        .find(|p| p.id == project_id || (wants_current && p.current))
         .ok_or_else(|| format!("Unknown project: {project_id}"))
 }
 
-fn project_path_matches(stored_path: &str, candidate: &str) -> bool {
+fn project_paths_equal(stored_path: &str, candidate: &str) -> bool {
     let stored = normalize_path(stored_path);
     let candidate = normalize_path(candidate);
     if cfg!(windows) {
@@ -651,11 +711,15 @@ fn project_path_matches(stored_path: &str, candidate: &str) -> bool {
 }
 
 fn read_project_id(path: &str) -> Option<String> {
-    let raw = fs::read_to_string(Path::new(path).join(".llm-wiki/project.json")).ok()?;
+    let root = Path::new(path);
+    let raw = fs::read_to_string(root.join(".potato-box/project.json"))
+        .or_else(|_| fs::read_to_string(root.join(".llm-wiki/project.json")))
+        .ok()?;
     let parsed: Value = serde_json::from_str(&raw).ok()?;
     parsed
         .get("id")
         .and_then(Value::as_str)
+        .filter(|id| uuid::Uuid::parse_str(id).is_ok())
         .map(ToOwned::to_owned)
 }
 
@@ -1013,7 +1077,13 @@ fn parse_review_query(query: &str) -> Result<ReviewQuery, String> {
 }
 
 fn load_review_items(project_path: &str, query: &ReviewQuery) -> Result<Vec<Value>, String> {
-    let path = Path::new(project_path).join(".llm-wiki/review.json");
+    let root = Path::new(project_path);
+    let path = root.join(".potato-box/review.json");
+    let path = if path.is_file() {
+        path
+    } else {
+        root.join(".llm-wiki/review.json")
+    };
     let raw = match fs::read_to_string(&path) {
         Ok(raw) => raw,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1269,10 +1339,14 @@ fn build_graph(project_path: &str) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdg
         };
         let id = entry
             .path()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
+            .strip_prefix(&wiki_root)
+            .ok()
+            .map(|path| {
+                normalize_path(path.to_string_lossy().as_ref())
+                    .trim_end_matches(".md")
+                    .to_string()
+            })
+            .unwrap_or_default();
         if id.is_empty() {
             continue;
         }
@@ -1357,13 +1431,29 @@ fn extract_wikilinks(content: &str) -> Vec<String> {
 }
 
 fn resolve_link(raw: &str, ids: &BTreeSet<String>) -> Option<String> {
-    if ids.contains(raw) {
-        return Some(raw.to_string());
-    }
-    let normalized = raw.to_lowercase().replace(' ', "-");
-    ids.iter()
-        .find(|id| id.to_lowercase() == normalized || id.to_lowercase() == raw.to_lowercase())
+    let normalized_path = normalize_path(raw);
+    let without_root = normalized_path.trim_start_matches('/');
+    let normalized = without_root
+        .strip_prefix("wiki/")
+        .unwrap_or(without_root)
+        .trim_end_matches(".md")
+        .to_string();
+    let canonical = |value: &str| value.to_lowercase().replace(' ', "-");
+    let exact = ids
+        .iter()
+        .filter(|id| canonical(id) == canonical(&normalized))
         .cloned()
+        .collect::<Vec<_>>();
+    if exact.len() == 1 {
+        return exact.into_iter().next();
+    }
+    let basename = normalized.rsplit('/').next().unwrap_or(&normalized);
+    let matches = ids
+        .iter()
+        .filter(|id| canonical(id.rsplit('/').next().unwrap_or(id)) == canonical(basename))
+        .cloned()
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches[0].clone())
 }
 
 fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {
@@ -1425,7 +1515,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("llm-wiki-api-test-{id}"));
+        let path = std::env::temp_dir().join(format!("potato-box-api-test-{id}"));
         fs::create_dir_all(path.join("wiki")).unwrap();
         path
     }
@@ -1456,6 +1546,36 @@ mod tests {
     }
 
     #[test]
+    fn browser_origins_are_limited_to_the_webview_and_local_dev_server() {
+        assert!(origin_is_allowed(None));
+        assert!(origin_is_allowed(Some("http://tauri.localhost")));
+        assert!(origin_is_allowed(Some("tauri://localhost")));
+        assert!(origin_is_allowed(Some("http://localhost:1420")));
+        assert!(!origin_is_allowed(Some("null")));
+        assert!(!origin_is_allowed(Some("https://example.com")));
+        assert!(!origin_is_allowed(Some("chrome-extension://example")));
+    }
+
+    #[test]
+    fn cors_response_reflects_only_the_validated_origin() {
+        let headers = response_headers(Some("http://tauri.localhost"));
+        let allow_origin = headers
+            .iter()
+            .find(|header| header.field.equiv("Access-Control-Allow-Origin"));
+        assert_eq!(
+            allow_origin.map(|header| header.value.as_str()),
+            Some("http://tauri.localhost")
+        );
+        assert!(!headers.iter().any(|header| header.value.as_str() == "*"));
+        assert!(headers.iter().any(|header| {
+            header.field.equiv("Cache-Control") && header.value.as_str() == "no-store"
+        }));
+        assert!(headers.iter().any(|header| {
+            header.field.equiv("X-Content-Type-Options") && header.value.as_str() == "nosniff"
+        }));
+    }
+
+    #[test]
     fn snippet_handles_unicode_boundaries() {
         let content = "前言。这里是关于知识图谱过滤的中文内容。后续说明。";
         let snippet = commands::search::build_snippet(content, "知识图谱");
@@ -1468,6 +1588,7 @@ mod tests {
         assert!(is_public_project_rel("Wiki/index.md"));
         assert!(is_public_project_rel("raw/sources/source.md"));
         assert!(is_public_project_rel("Raw/Sources/source.md"));
+        assert!(!is_public_project_rel(".potato-box/file-change-queue.json"));
         assert!(!is_public_project_rel(".llm-wiki/file-change-queue.json"));
         assert!(!is_public_project_rel("wiki/.draft.md"));
     }
@@ -1475,7 +1596,7 @@ mod tests {
     #[test]
     fn review_query_defaults_to_unresolved_items() {
         let root = test_project_dir();
-        let state_dir = root.join(".llm-wiki");
+        let state_dir = root.join(".potato-box");
         fs::create_dir_all(&state_dir).unwrap();
         fs::write(
             state_dir.join("review.json"),
@@ -1517,7 +1638,7 @@ mod tests {
     #[test]
     fn review_query_filters_by_type_status_and_limit() {
         let root = test_project_dir();
-        let state_dir = root.join(".llm-wiki");
+        let state_dir = root.join(".potato-box");
         fs::create_dir_all(&state_dir).unwrap();
         fs::write(
             state_dir.join("review.json"),
@@ -1546,18 +1667,15 @@ mod tests {
     }
 
     #[test]
-    fn project_path_match_normalizes_separators() {
-        assert!(project_path_matches(
+    fn internal_project_path_comparison_normalizes_separators() {
+        assert!(project_paths_equal(
             "C:/Users/me/wiki",
             "C:\\Users\\me\\wiki"
         ));
         if cfg!(windows) {
-            assert!(project_path_matches("C:/Users/me/wiki", "c:/users/me/wiki"));
+            assert!(project_paths_equal("C:/Users/me/wiki", "c:/users/me/wiki"));
         } else {
-            assert!(!project_path_matches(
-                "C:/Users/me/wiki",
-                "c:/users/me/wiki"
-            ));
+            assert!(!project_paths_equal("C:/Users/me/wiki", "c:/users/me/wiki"));
         }
     }
 
@@ -1598,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn api_config_shape_parses_enabled_and_unauthenticated_access() {
+    fn api_config_shape_parses_enabled_and_token_source() {
         // Standalone pure-function check to mirror what `api_enabled`
         // reads off `load_app_state`. Mirrors the JS-side shape
         // emitted by `saveApiConfig` so any rename on either side
@@ -1606,7 +1724,6 @@ mod tests {
         let payload = json!({
             "apiConfig": {
                 "enabled": false,
-                "allowUnauthenticated": true,
                 "mcpEnabled": true,
                 "token": "abc"
             }
@@ -1617,12 +1734,6 @@ mod tests {
             .and_then(Value::as_bool)
             .unwrap_or(true);
         assert!(!enabled);
-        let allow_unauthenticated = payload
-            .get("apiConfig")
-            .and_then(|v| v.get("allowUnauthenticated"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        assert!(allow_unauthenticated);
         let mcp_enabled = payload
             .get("apiConfig")
             .and_then(|v| v.get("mcpEnabled"))

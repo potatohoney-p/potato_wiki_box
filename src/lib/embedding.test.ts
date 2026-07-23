@@ -1331,7 +1331,7 @@ describe("embedAllPages", () => {
     const upsertCalls = mockInvoke.mock.calls.filter((c) => c[0] === "vector_upsert_chunks")
     expect(upsertCalls).toHaveLength(2)
     const pageIds = upsertCalls.map((c) => (c[1] as { pageId: string }).pageId).sort()
-    expect(pageIds).toEqual(["attention", "rope"])
+    expect(pageIds).toEqual(["rope", "sub%2Fattention"])
   })
 
   it("clears the chunk table before a forced rebuild", async () => {
@@ -1798,5 +1798,20 @@ describe("legacyVectorRowCount / dropLegacyVectorTable / getEmbeddingCount / rem
     mockInvoke.mockRejectedValueOnce(new Error("table missing"))
     // Must not throw — source-delete flow depends on silent failure.
     await expect(removePageEmbedding("/proj", "rope")).resolves.toBeUndefined()
+  })
+
+  it("removePageEmbedding: also removes a pre-migration basename row", async () => {
+    mockInvoke.mockResolvedValue(undefined)
+
+    await removePageEmbedding("/proj", "concepts%2Frope")
+
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, "vector_delete_page", {
+      projectPath: "/proj",
+      pageId: "concepts%2Frope",
+    })
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, "vector_delete_page", {
+      projectPath: "/proj",
+      pageId: "rope",
+    })
   })
 })

@@ -22,6 +22,7 @@
 import { deleteFile, listDirectory, readFile, writeFile } from "@/commands/fs"
 import { getFileStem, normalizePath } from "@/lib/path-utils"
 import { removePageEmbedding } from "@/lib/embedding"
+import { vectorPageIdFromPath } from "@/lib/wiki-page-id"
 import {
   buildDeletedKeys,
   cleanIndexListing,
@@ -61,10 +62,9 @@ function isSourcePage(pagePath: string): boolean {
  * cascade to the right LanceDB instance, and to locate the media
  * directory).
  *
- * `pagePath` may be absolute or relative; only its basename is used
- * for the page-id lookup, so callers don't need to normalize before
- * calling. The disk delete uses the path verbatim — pass an
- * absolute path if your caller has one (most do).
+ * `pagePath` may be absolute or relative. Paths below the project wiki
+ * are encoded as wiki-relative IDs so identical basenames in different
+ * namespaces cannot collide. The disk delete uses the path verbatim.
  */
 export async function cascadeDeleteWikiPage(
   projectPath: string,
@@ -73,7 +73,10 @@ export async function cascadeDeleteWikiPage(
   await deleteFile(pagePath)
   const slug = getFileStem(pagePath)
   if (slug.length > 0) {
-    await removePageEmbedding(projectPath, slug)
+    await removePageEmbedding(
+      projectPath,
+      vectorPageIdFromPath(pagePath, `${projectPath}/wiki`),
+    )
   }
 
   // Media cascade: source-summary deletion → drop the source's

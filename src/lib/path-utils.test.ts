@@ -6,6 +6,7 @@ import {
   getFileStem,
   getRelativePath,
   isAbsolutePath,
+  isPathWithinBase,
 } from "./path-utils"
 
 describe("normalizePath", () => {
@@ -149,5 +150,17 @@ describe("isAbsolutePath", () => {
   it("rejects drive-letter WITHOUT a separator (ambiguous)", () => {
     // "C:foo" is a Windows drive-relative path, not absolute.
     expect(isAbsolutePath("C:foo")).toBe(false)
+  })
+})
+
+describe("isPathWithinBase", () => {
+  it("requires a path-segment boundary", () => {
+    expect(isPathWithinBase("/project/wiki/page.md", "/project")).toBe(true)
+    expect(isPathWithinBase("/projector/page.md", "/project")).toBe(false)
+    expect(isPathWithinBase("/project/../secret", "/project")).toBe(false)
+  })
+
+  it("normalizes Windows separators and drive casing", () => {
+    expect(isPathWithinBase("c:\\Project\\wiki\\page.md", "C:/Project")).toBe(true)
   })
 })

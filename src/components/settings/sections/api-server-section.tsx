@@ -31,15 +31,13 @@ interface ApiHealth {
   mcpEnabled?: boolean
   authRequired?: boolean
   authConfigured?: boolean
-  allowUnauthenticated?: boolean
   tokenSource?: "env" | "store" | "none"
 }
 
 /**
  * Documented endpoint surface. Kept in lock-step with
  * `src-tauri/src/api_server.rs::handle_request`. When you add or remove
- * a route there, update this list — it's the only place users discover
- * the API contract until we ship a proper OpenAPI doc.
+ * a route there, update this list and docs/API.md together.
  */
 export const API_ENDPOINTS: Array<{ method: "GET" | "POST"; path: string; noteKey: string }> = [
   { method: "GET", path: "/api/v1/health", noteKey: "endpointHealthNote" },
@@ -50,7 +48,6 @@ export const API_ENDPOINTS: Array<{ method: "GET" | "POST"; path: string; noteKe
   { method: "POST", path: "/api/v1/projects/{id}/search", noteKey: "endpointSearchNote" },
   { method: "GET", path: "/api/v1/projects/{id}/graph", noteKey: "endpointGraphNote" },
   { method: "POST", path: "/api/v1/projects/{id}/sources/rescan", noteKey: "endpointRescanNote" },
-  { method: "POST", path: "/api/v1/projects/{id}/chat", noteKey: "endpointChatNote" },
 ]
 
 export function ApiServerSection({ draft, setDraft }: Props) {
@@ -113,25 +110,17 @@ export function ApiServerSection({ draft, setDraft }: Props) {
   }, [draft.apiToken])
 
   const sampleCurl = useMemo(() => {
-    if (draft.apiAllowUnauthenticated) {
-      return `curl ${API_SERVER_BASE_URL}/api/v1/projects`
-    }
-    // Show the user a complete, paste-runnable example. The Bearer
-    // header is the recommended auth (never put the token in URL
-    // query — it leaks into logs / shell history / Referer).
     const tokenForExample = draft.apiToken || "<your-token>"
     return `curl -H 'Authorization: Bearer ${tokenForExample}' ${API_SERVER_BASE_URL}/api/v1/projects`
-  }, [draft.apiAllowUnauthenticated, draft.apiToken])
+  }, [draft.apiToken])
 
   const sampleMcpConfig = useMemo(() => {
     if (!mcpEntryPath) return ""
-    const env = draft.apiAllowUnauthenticated
-      ? {}
-      : { LLM_WIKI_API_TOKEN: draft.apiToken || "<your-token>" }
+    const env = { POTATO_BOX_API_TOKEN: draft.apiToken || "<your-token>" }
     return JSON.stringify(
       {
         mcpServers: {
-          "llm-wiki": {
+          "potato-box": {
             command: "node",
             args: [mcpEntryPath],
             ...(Object.keys(env).length > 0 ? { env } : {}),
@@ -141,11 +130,10 @@ export function ApiServerSection({ draft, setDraft }: Props) {
       null,
       2,
     )
-  }, [draft.apiAllowUnauthenticated, draft.apiToken, mcpEntryPath])
+  }, [draft.apiToken, mcpEntryPath])
 
   const hasUnsavedApiConfig =
     persistedApiConfig.enabled !== draft.apiEnabled ||
-    persistedApiConfig.allowUnauthenticated !== draft.apiAllowUnauthenticated ||
     persistedApiConfig.mcpEnabled !== draft.apiMcpEnabled ||
     persistedApiConfig.token !== draft.apiToken.trim()
 
@@ -180,9 +168,6 @@ export function ApiServerSection({ draft, setDraft }: Props) {
     if (!draft.apiEnabled) {
       return t("settings.sections.apiServer.statusDisabled", { defaultValue: "Disabled" })
     }
-    if (health?.allowUnauthenticated || draft.apiAllowUnauthenticated) {
-      return t("settings.sections.apiServer.statusOpen", { defaultValue: "Running, no auth" })
-    }
     if (serverStatus === "running" && health?.authConfigured === false && !draft.apiToken) {
       return t("settings.sections.apiServer.statusNoToken", { defaultValue: "Running, no token" })
     }
@@ -202,14 +187,12 @@ export function ApiServerSection({ draft, setDraft }: Props) {
       default:
         return serverStatus
     }
-  }, [draft.apiAllowUnauthenticated, draft.apiEnabled, draft.apiToken, health, serverStatus, t])
+  }, [draft.apiEnabled, draft.apiToken, health, serverStatus, t])
 
   const statusToneClass =
     !draft.apiEnabled
       ? "text-muted-foreground"
-      : (health?.allowUnauthenticated || draft.apiAllowUnauthenticated)
-        ? "text-amber-700 dark:text-amber-400"
-        : serverStatus === "running"
+      : serverStatus === "running"
       ? "text-emerald-600 dark:text-emerald-400"
       : serverStatus === "starting"
         ? "text-muted-foreground"
@@ -217,9 +200,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
           ? "text-muted-foreground"
           : "text-destructive"
 
-  const tokenStrength: "unused" | "missing" | "weak" | "ok" = draft.apiAllowUnauthenticated
-    ? "unused"
-    : !draft.apiToken
+  const tokenStrength: "missing" | "weak" | "ok" = !draft.apiToken
       ? "missing"
       : draft.apiToken.length < 16
         ? "weak"
@@ -234,7 +215,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
         <p className="mt-1 text-sm text-muted-foreground">
           {t("settings.sections.apiServer.description", {
             defaultValue:
-              "Expose LLM Wiki to your own tools through the local HTTP API, and optionally through the bundled MCP server for agent clients.",
+              "Expose potato box to your own tools through the local HTTP API, and optionally through the bundled MCP server for agent clients.",
           })}
         </p>
       </div>
@@ -259,28 +240,6 @@ export function ApiServerSection({ draft, setDraft }: Props) {
               {t("settings.sections.apiServer.enableHint", {
                 defaultValue:
                   "Disable to make every non-/health endpoint return 503 even if a token is configured. Useful as a kill-switch without unsetting the token.",
-              })}
-            </p>
-          </div>
-        </label>
-
-        <label className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/30">
-          <input
-            type="checkbox"
-            checked={draft.apiAllowUnauthenticated}
-            onChange={(event) => setDraft("apiAllowUnauthenticated", event.target.checked)}
-            className="mt-1 h-4 w-4"
-          />
-          <div className="space-y-1">
-            <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-              {t("settings.sections.apiServer.allowUnauthenticated", {
-                defaultValue: "Allow access without a token",
-              })}
-            </div>
-            <p className="text-xs leading-relaxed text-amber-900 dark:text-amber-200">
-              {t("settings.sections.apiServer.allowUnauthenticatedHint", {
-                defaultValue:
-                  "Use only for trusted local agents. Any process or browser page on this machine can call the API while this is enabled.",
               })}
             </p>
           </div>
@@ -323,7 +282,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {t("settings.sections.apiServer.tokenHint", {
               defaultValue:
-                "Required unless unauthenticated access is enabled. Send as `Authorization: Bearer <token>` or `X-LLM-Wiki-Token: <token>`. The environment variable LLM_WIKI_API_TOKEN overrides this field if set.",
+                "Required for every API and clipper request. Send as `Authorization: Bearer <token>` or `X-Potato-Box-Token: <token>`. The environment variable POTATO_BOX_API_TOKEN overrides this field if set.",
             })}
           </p>
         </div>
@@ -392,17 +351,10 @@ export function ApiServerSection({ draft, setDraft }: Props) {
               })}
             </span>
           )}
-          {tokenStrength === "unused" && (
-            <span className="text-xs text-amber-700 dark:text-amber-400">
-              {t("settings.sections.apiServer.tokenUnused", {
-                defaultValue: "Token is not used while unauthenticated access is enabled",
-              })}
-            </span>
-          )}
           {health?.tokenSource === "env" && (
             <span className="text-xs text-amber-700 dark:text-amber-400">
               {t("settings.sections.apiServer.envTokenActive", {
-                defaultValue: "LLM_WIKI_API_TOKEN is active and overrides this field",
+                defaultValue: "POTATO_BOX_API_TOKEN is active and overrides this field",
               })}
             </span>
           )}
@@ -424,19 +376,11 @@ export function ApiServerSection({ draft, setDraft }: Props) {
 
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
           <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <div className="space-y-1">
-            <div>
-              {t("settings.sections.apiServer.tokenWarning", {
-                defaultValue:
-                  "Keep this token secret. Anyone with the token on this machine can read your project files via localhost.",
-              })}
-            </div>
-            <div>
-              {t("settings.sections.apiServer.tokenQueryWarning", {
-                defaultValue:
-                  "Prefer the Authorization header — passing ?token=… via URL leaks the value into shell history, logs, and Referer headers.",
-              })}
-            </div>
+          <div>
+            {t("settings.sections.apiServer.tokenWarning", {
+              defaultValue:
+                "Keep this token secret. Anyone with the token on this machine can read project data through localhost. URL query tokens are rejected.",
+            })}
           </div>
         </div>
       </div>
@@ -477,7 +421,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
         </h3>
         <p className="text-xs leading-relaxed text-muted-foreground">
           {t("settings.sections.apiServer.endpointsHint", {
-            defaultValue: "Replace {id} with a project UUID, a project filesystem path, or the literal 'current'.",
+            defaultValue: "Replace {id} with a project UUID or the literal 'current'.",
           })}
         </p>
         <div className="space-y-1 text-xs">
@@ -553,7 +497,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
           <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
             {t("settings.sections.apiServer.mcpUsageHint", {
               defaultValue:
-                "Build once with `npm run mcp:build`, then configure your MCP client to run the server below. Use LLM_WIKI_API_TOKEN unless unauthenticated access is enabled.",
+                "Build once with `npm run mcp:build`, then configure your MCP client to run the server below with POTATO_BOX_API_TOKEN.",
             })}
           </p>
           {mcpPathError && (
@@ -569,7 +513,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
               : !mcpEntryPath
                 ? t("settings.sections.apiServer.mcpPathUnavailable", {
                     defaultValue:
-                      "MCP server entry was not found. Run `npm run mcp:build` from the LLM Wiki repository, then reopen Settings.",
+                      "MCP server entry was not found. Run `npm run mcp:build` from the potato box repository, then reopen Settings.",
                   })
               : sampleMcpConfig}
           </pre>

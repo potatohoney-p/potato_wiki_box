@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-debug_ollama_tokens.py — reproduce LLM Wiki's wiki-generation request against a
+debug_ollama_tokens.py — reproduce potato box's wiki-generation request against a
 raw Ollama endpoint so we can see exactly why generation reports "too many
 tokens".
 
@@ -129,7 +129,7 @@ def call_native(base: str, model: str, prompt: str, max_tokens: int, num_ctx: in
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Debug Ollama 'too many tokens' for LLM Wiki generation.")
+    ap = argparse.ArgumentParser(description="Debug Ollama 'too many tokens' for potato box generation.")
     ap.add_argument("--base", default="http://localhost:11434", help="Ollama base URL")
     ap.add_argument("--model", default="gemma4:12b")
     ap.add_argument("--timeout", type=float, default=180.0)

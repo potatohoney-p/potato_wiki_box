@@ -1,6 +1,7 @@
 import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
+import { resolveWikiPageId, wikiPageIdFromPath } from "@/lib/wiki-page-id"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,10 +65,6 @@ function flattenMdFiles(nodes: readonly FileNode[]): FileNode[] {
   return files
 }
 
-function fileNameToId(fileName: string): string {
-  return fileName.replace(/\.md$/, "")
-}
-
 function extractFrontmatter(content: string): { title: string; type: string; sources: string[] } {
   const fmMatch = content.match(/^---\n([\s\S]*?)\n---/)
   const fm = fmMatch ? fmMatch[1] : ""
@@ -121,22 +118,6 @@ function extractWikilinks(content: string): string[] {
   return links
 }
 
-function resolveTarget(
-  raw: string,
-  nodeIds: ReadonlySet<string>,
-): string | null {
-  if (nodeIds.has(raw)) return raw
-
-  const normalized = raw.toLowerCase().replace(/\s+/g, "-")
-  for (const id of nodeIds) {
-    const idLower = id.toLowerCase()
-    if (idLower === normalized) return id
-    if (idLower === raw.toLowerCase()) return id
-    if (idLower.replace(/\s+/g, "-") === normalized) return id
-  }
-  return null
-}
-
 function getNeighbors(node: RetrievalNode): ReadonlySet<string> {
   const neighbors = new Set<string>()
   for (const id of node.outLinks) neighbors.add(id)
@@ -185,7 +166,7 @@ export async function buildRetrievalGraph(
   }> = []
 
   for (const file of mdFiles) {
-    const id = fileNameToId(file.name)
+    const id = wikiPageIdFromPath(file.path, wikiRoot)
     let content = ""
     try {
       content = await readFile(file.path)
@@ -218,7 +199,7 @@ export async function buildRetrievalGraph(
 
   for (const raw of rawNodes) {
     for (const linkTarget of raw.rawLinks) {
-      const resolvedId = resolveTarget(linkTarget, nodeIds)
+      const resolvedId = resolveWikiPageId(linkTarget, nodeIds)
       if (resolvedId === null || resolvedId === raw.id) continue
       outLinksMap.get(raw.id)!.add(resolvedId)
       inLinksMap.get(resolvedId)!.add(raw.id)

@@ -233,7 +233,7 @@ const enrichedSource = sourceContent + imageSection
 
 Per-image cache keyed by SHA-256 of image bytes — same logo across
 50 PDFs = 1 caption call, not 50. Cache lives in
-`<project>/.llm-wiki/image-caption-cache.json` mapping
+`<project>/.potato-box/image-caption-cache.json` mapping
 `hash → caption` (and image dimensions, mime, optionally the cached
 file path so we deduplicate file storage too).
 

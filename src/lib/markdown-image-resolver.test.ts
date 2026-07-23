@@ -29,16 +29,21 @@ describe("resolveMarkdownImageSrc", () => {
     )
   })
 
-  it("passes data: URIs through unchanged (inline base64)", () => {
+  it("passes allowlisted raster data: URIs through unchanged", () => {
     const src = "data:image/png;base64,iVBORw0K..."
     expect(resolveMarkdownImageSrc(src, PROJECT)).toBe(src)
   })
 
-  it("passes blob: and tauri: URIs through unchanged", () => {
+  it("passes app-created blob: URIs through unchanged", () => {
     expect(resolveMarkdownImageSrc("blob:abc-123", PROJECT)).toBe("blob:abc-123")
-    expect(resolveMarkdownImageSrc("tauri://asset/foo.png", PROJECT)).toBe(
-      "tauri://asset/foo.png",
-    )
+  })
+
+  it("blocks privileged local schemes and unsafe data payloads", () => {
+    expect(resolveMarkdownImageSrc("file:///etc/passwd", PROJECT)).toBe("")
+    expect(resolveMarkdownImageSrc("tauri://asset/foo.png", PROJECT)).toBe("")
+    expect(resolveMarkdownImageSrc("asset://localhost/foo.png", PROJECT)).toBe("")
+    expect(resolveMarkdownImageSrc("data:image/svg+xml,<svg/>", PROJECT)).toBe("")
+    expect(resolveMarkdownImageSrc("javascript:alert(1)", PROJECT)).toBe("")
   })
 
   it("treats a wiki-rooted relative path as media under <project>/wiki/", () => {
@@ -86,19 +91,17 @@ describe("resolveMarkdownImageSrc", () => {
   })
 
   it("does not convert an absolute POSIX path outside the project", () => {
-    expect(resolveMarkdownImageSrc("/var/data/screenshot.png", PROJECT)).toBe(
-      "/var/data/screenshot.png",
-    )
+    expect(resolveMarkdownImageSrc("/var/data/screenshot.png", PROJECT)).toBe("")
   })
 
   it("does not convert an absolute POSIX path that escapes via .. segments", () => {
     const src = "/Users/me/MyWiki/../../../etc/passwd.png"
-    expect(resolveMarkdownImageSrc(src, PROJECT)).toBe(src)
+    expect(resolveMarkdownImageSrc(src, PROJECT)).toBe("")
   })
 
   it("does not treat a sibling path with the same prefix as inside the project", () => {
     const src = "/Users/me/MyWikiSecret/screenshot.png"
-    expect(resolveMarkdownImageSrc(src, PROJECT)).toBe(src)
+    expect(resolveMarkdownImageSrc(src, PROJECT)).toBe("")
   })
 
   it("converts a Windows drive-letter path only when it stays inside the project", () => {
@@ -113,13 +116,31 @@ describe("resolveMarkdownImageSrc", () => {
   it("does not convert a Windows drive-letter path outside the project", () => {
     expect(
       resolveMarkdownImageSrc("C:/Users/me/Pictures/x.png", "C:/Users/me/MyWiki"),
-    ).toBe("C:/Users/me/Pictures/x.png")
+    ).toBe("")
   })
 
   it("does not convert a UNC path outside the project", () => {
     expect(
       resolveMarkdownImageSrc("\\\\share\\folder\\img.png", PROJECT),
-    ).toBe("\\\\share\\folder\\img.png")
+    ).toBe("")
+  })
+
+  it("preserves and converts an in-project UNC path", () => {
+    expect(
+      resolveMarkdownImageSrc(
+        "\\\\server\\share\\MyWiki\\raw\\assets\\img.png",
+        "\\\\SERVER\\SHARE\\MyWiki",
+      ),
+    ).toBe("tauri-asset://server/share/MyWiki/raw/assets/img.png")
+  })
+
+  it("rejects a UNC path that escapes the project share via parent segments", () => {
+    expect(
+      resolveMarkdownImageSrc(
+        "//server/share/MyWiki/../../other/img.png",
+        "//server/share/MyWiki",
+      ),
+    ).toBe("")
   })
 
   it("returns the raw src unchanged when no project is loaded", () => {
@@ -209,13 +230,13 @@ describe("resolveMarkdownImageSrc", () => {
     it("does not convert a file-relative path that escapes the project", () => {
       expect(
         resolveMarkdownImageSrc("../../../../etc/x.png", PROJECT, `${PROJECT}/raw/sources`),
-      ).toBe("../../../../etc/x.png")
+      ).toBe("")
     })
 
     it("does not convert paths that climb above the project root", () => {
       expect(
         resolveMarkdownImageSrc("../../../x.png", PROJECT, `${PROJECT}/wiki/concepts`),
-      ).toBe("../../../x.png")
+      ).toBe("")
     })
 
     it("still uses wiki-root fallback when no currentFileDir is given", () => {
@@ -301,7 +322,7 @@ describe("resolveMarkdownImageSrc", () => {
     it("does not convert project-external absolute srcs even with a file dir set", () => {
       expect(
         resolveMarkdownImageSrc("/var/data/x.png", PROJECT, `${PROJECT}/raw/sources`),
-      ).toBe("/var/data/x.png")
+      ).toBe("")
     })
   })
 })

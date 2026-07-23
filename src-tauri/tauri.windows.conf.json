@@ -3,12 +3,18 @@
     "windows": [
       {
         "label": "main",
+        "title": "potato box",
         "hiddenTitle": false,
         "titleBarStyle": "Visible"
       }
     ]
   },
   "bundle": {
-    "resources": ["pdfium/pdfium.dll"]
+    "resources": {
+      "pdfium/pdfium.dll": "pdfium/pdfium.dll",
+      "../mcp-server/dist/index.js": "mcp-server/dist/index.js",
+      "../mcp-server/package.json": "mcp-server/package.json",
+      "../mcp-server/LICENSE": "mcp-server/LICENSE"
+    }
   }
 }

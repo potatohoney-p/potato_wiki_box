@@ -1,6 +1,5 @@
 import { useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
-import { open } from "@tauri-apps/plugin-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
@@ -12,6 +11,7 @@ import {
   resolveImportPath,
   scanAndImport,
 } from "@/lib/scheduled-import"
+import { isDesktopRuntimeUnavailable, selectDirectory } from "@/lib/native-dialog"
 
 interface Props {
   draft: SettingsDraft
@@ -25,15 +25,20 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
   const [isScanning, setIsScanning] = useState(false)
 
   const handleSelectDirectory = async () => {
-    const selected = await open({
-      directory: true,
-      title: t("settings.sections.scheduledImport.selectDirectory", {
-        defaultValue: "Select Directory to Monitor",
-      }),
-    })
-
-    if (selected && typeof selected === "string") {
-      setDraft("scheduledImportPath", selected)
+    try {
+      const selected = await selectDirectory({
+        title: t("settings.sections.scheduledImport.selectDirectory", {
+          defaultValue: "Select Directory to Monitor",
+        }),
+      })
+      if (selected) setDraft("scheduledImportPath", selected)
+    } catch (err) {
+      const message = isDesktopRuntimeUnavailable(err)
+        ? t("nativeRuntime.desktopRequired")
+        : t("nativeRuntime.directoryPickerFailed", {
+            error: err instanceof Error ? err.message : String(err),
+          })
+      window.alert(message)
     }
   }
 
@@ -130,14 +135,14 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
         <p className="text-xs text-muted-foreground">
           {t("settings.sections.scheduledImport.directoryHelp", {
             defaultValue:
-              "Choose an external folder outside the current LLM Wiki project. Project folders are already handled by source folder monitoring.",
+              "Choose an external folder outside the current potato box project. Project folders are already handled by source folder monitoring.",
           })}
         </p>
         {managedPathSelected && (
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
             {t("settings.sections.scheduledImport.managedPathWarning", {
               defaultValue:
-                "This path is inside the current LLM Wiki project and is already managed by source folder monitoring. Pick an external folder to avoid duplicate scans.",
+                "This path is inside the current potato box project and is already managed by source folder monitoring. Pick an external folder to avoid duplicate scans.",
             })}
           </p>
         )}

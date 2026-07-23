@@ -70,10 +70,10 @@ describe("review persistence — round-trip", () => {
     expect(loaded).toEqual(items)
   })
 
-  it("creates the .llm-wiki directory on first save", async () => {
-    expect(await fileExists(`${tmp.path}/.llm-wiki`)).toBe(false)
+  it("creates the .potato-box directory on first save", async () => {
+    expect(await fileExists(`${tmp.path}/.potato-box`)).toBe(false)
     await saveReviewItems(tmp.path, [makeReview()])
-    expect(await fileExists(`${tmp.path}/.llm-wiki/review.json`)).toBe(true)
+    expect(await fileExists(`${tmp.path}/.potato-box/review.json`)).toBe(true)
   })
 
   it("returns empty array when the file is absent", async () => {
@@ -81,10 +81,15 @@ describe("review persistence — round-trip", () => {
     expect(loaded).toEqual([])
   })
 
-  it("returns empty array when the file is corrupted JSON", async () => {
-    await writeFileRaw(`${tmp.path}/.llm-wiki/review.json`, "{not valid json")
-    const loaded = await loadReviewItems(tmp.path)
-    expect(loaded).toEqual([])
+  it("preserves and rejects corrupted review JSON", async () => {
+    const corrupt = "{not valid json"
+    await writeFileRaw(`${tmp.path}/.potato-box/review.json`, corrupt)
+
+    await expect(loadReviewItems(tmp.path)).rejects.toThrow("invalid JSON")
+
+    expect(await readFileRaw(`${tmp.path}/.potato-box/review.json`)).toBe(corrupt)
+    const recovery = await realFs.listDirectory(`${tmp.path}/.potato-box/recovery`)
+    expect(recovery.some((entry) => entry.name.startsWith("review.json.corrupt-"))).toBe(true)
   })
 
   it("preserves Unicode titles through JSON round-trip", async () => {
@@ -129,10 +134,10 @@ describe("lint persistence — round-trip", () => {
     expect(loaded).toEqual(items)
   })
 
-  it("creates the .llm-wiki directory on first save", async () => {
-    expect(await fileExists(`${tmp.path}/.llm-wiki`)).toBe(false)
+  it("creates the .potato-box directory on first save", async () => {
+    expect(await fileExists(`${tmp.path}/.potato-box`)).toBe(false)
     await saveLintItems(tmp.path, [makeLint()])
-    expect(await fileExists(`${tmp.path}/.llm-wiki/lint.json`)).toBe(true)
+    expect(await fileExists(`${tmp.path}/.potato-box/lint.json`)).toBe(true)
   })
 
   it("returns empty array when the file is absent", async () => {
@@ -140,10 +145,15 @@ describe("lint persistence — round-trip", () => {
     expect(loaded).toEqual([])
   })
 
-  it("returns empty array when the file is corrupted JSON", async () => {
-    await writeFileRaw(`${tmp.path}/.llm-wiki/lint.json`, "{not valid json")
-    const loaded = await loadLintItems(tmp.path)
-    expect(loaded).toEqual([])
+  it("preserves and rejects corrupted lint JSON", async () => {
+    const corrupt = "{not valid json"
+    await writeFileRaw(`${tmp.path}/.potato-box/lint.json`, corrupt)
+
+    await expect(loadLintItems(tmp.path)).rejects.toThrow("invalid JSON")
+
+    expect(await readFileRaw(`${tmp.path}/.potato-box/lint.json`)).toBe(corrupt)
+    const recovery = await realFs.listDirectory(`${tmp.path}/.potato-box/recovery`)
+    expect(recovery.some((entry) => entry.name.startsWith("lint.json.corrupt-"))).toBe(true)
   })
 
   it("preserves all LintItem fields through JSON round-trip including affectedPages", async () => {
@@ -198,9 +208,9 @@ describe("chat persistence — round-trip (new format)", () => {
         makeMsg("m3", "c2", "other"),
       ],
     )
-    expect(await fileExists(`${tmp.path}/.llm-wiki/conversations.json`)).toBe(true)
-    expect(await fileExists(`${tmp.path}/.llm-wiki/chats/c1.json`)).toBe(true)
-    expect(await fileExists(`${tmp.path}/.llm-wiki/chats/c2.json`)).toBe(true)
+    expect(await fileExists(`${tmp.path}/.potato-box/conversations.json`)).toBe(true)
+    expect(await fileExists(`${tmp.path}/.potato-box/chats/c1.json`)).toBe(true)
+    expect(await fileExists(`${tmp.path}/.potato-box/chats/c2.json`)).toBe(true)
   })
 
   it("round-trips conversations + messages", async () => {
@@ -230,7 +240,7 @@ describe("chat persistence — round-trip (new format)", () => {
     expect(msg.images).toHaveLength(1)
     expect(msg.images?.[0].dataBase64).toBe("A".repeat(1024))
 
-    const raw = await readFileRaw(`${tmp.path}/.llm-wiki/chats/c1.json`)
+    const raw = await readFileRaw(`${tmp.path}/.potato-box/chats/c1.json`)
     expect(raw).not.toContain("dataBase64")
     expect(raw).not.toContain("image/png")
 
@@ -263,11 +273,11 @@ describe("chat persistence — round-trip (new format)", () => {
   it("skips missing per-conversation files without throwing", async () => {
     // conversations.json references c1 + c2, but chats/c2.json is missing
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/conversations.json`,
+      `${tmp.path}/.potato-box/conversations.json`,
       JSON.stringify([makeConv("c1"), makeConv("c2")]),
     )
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/chats/c1.json`,
+      `${tmp.path}/.potato-box/chats/c1.json`,
       JSON.stringify([makeMsg("m1", "c1", "hi")]),
     )
     const loaded = await loadChatHistory(tmp.path)
@@ -303,7 +313,7 @@ describe("chat persistence — legacy format fallback", () => {
       { id: "m2", role: "assistant", content: "older", timestamp: 200, conversationId: "ignored" },
     ]
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/chat-history.json`,
+      `${tmp.path}/.potato-box/chat-history.json`,
       JSON.stringify(legacyMessages),
     )
 
@@ -320,7 +330,7 @@ describe("chat persistence — legacy format fallback", () => {
       messages: [makeMsg("m1", "c1")],
     }
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/chat-history.json`,
+      `${tmp.path}/.potato-box/chat-history.json`,
       JSON.stringify(old),
     )
 
@@ -331,14 +341,14 @@ describe("chat persistence — legacy format fallback", () => {
 
   it("new format wins over legacy when both exist", async () => {
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/chat-history.json`,
+      `${tmp.path}/.potato-box/chat-history.json`,
       JSON.stringify({ conversations: [makeConv("legacy")], messages: [] }),
     )
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/conversations.json`,
+      `${tmp.path}/.potato-box/conversations.json`,
       JSON.stringify([makeConv("new")]),
     )
-    await writeFileRaw(`${tmp.path}/.llm-wiki/chats/new.json`, "[]")
+    await writeFileRaw(`${tmp.path}/.potato-box/chats/new.json`, "[]")
 
     const loaded = await loadChatHistory(tmp.path)
     expect(loaded.conversations[0].id).toBe("new")

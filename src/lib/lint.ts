@@ -1,4 +1,4 @@
-import { readFile, listDirectory } from "@/commands/fs"
+import { listDirectory, readTextFileLimited } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
@@ -22,6 +22,7 @@ const RELATED_PAGE_SUGGESTION_MIN_SCORE = 0.08
 const SAME_FOLDER_SCORE_BONUS = 0.08
 const SINGLE_CJK_TOKEN_WEIGHT = 0.35
 const SUGGESTION_TOKEN_WINDOW = 4000
+const MAX_LINT_MARKDOWN_BYTES = 8 * 1024 * 1024
 const SAME_BASENAME_SCORE = 0.96
 const CONTAINS_TARGET_SCORE = 0.82
 
@@ -157,14 +158,16 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
   }
 
   const wikiFiles = flattenMdFiles(tree)
-  // Exclude index.md and log.md from orphan checks
   const contentFiles = wikiFiles.filter(
-    (f) => f.name !== "index.md" && f.name !== "log.md"
+    (file) => !/^(?:index|log|overview)\.md$/i.test(file.name),
   )
+  const contentPaths = new Set(contentFiles.map((file) => file.path))
 
-  const slugMap = buildSlugMap(contentFiles, wikiRoot)
+  // System pages still resolve links and contribute inbound links, but they
+  // are not themselves actionable orphan/no-outlink findings.
+  const slugMap = buildSlugMap(wikiFiles, wikiRoot)
 
-  // Read all content files
+  // Read all wiki files so index/overview links participate in graph health.
   type PageData = {
     path: string
     shortName: string
@@ -176,9 +179,9 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
   }
   const pages: PageData[] = []
 
-  for (const f of contentFiles) {
+  for (const f of wikiFiles) {
     try {
-      const content = await readFile(f.path)
+      const content = await readTextFileLimited(f.path, MAX_LINT_MARKDOWN_BYTES)
       const shortName = getRelativePath(f.path, wikiRoot)
       const slug = relativeToSlug(shortName)
       const title = extractTitle(content, shortName)
@@ -190,6 +193,8 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
       // skip unreadable files
     }
   }
+
+  const contentPages = pages.filter((page) => contentPaths.has(page.path))
 
   function suggestBrokenTarget(target: string): PageData | undefined {
     let best: { page: PageData; score: number } | undefined
@@ -207,7 +212,7 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
   function suggestRelatedPage(page: PageData, direction: "source" | "target"): PageData | undefined {
     const existingOutlinks = new Set(page.outlinks.map(normalizeLinkTarget))
     let best: { page: PageData; score: number } | undefined
-    for (const candidate of pages) {
+    for (const candidate of contentPages) {
       if (candidate.shortName === page.shortName) continue
       if (direction === "target") {
         const candidateKeys = [
@@ -249,10 +254,11 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
 
   for (const p of pages) {
     const shortName = p.shortName
+    const isContentPage = contentPaths.has(p.path)
 
     // Orphan: no inbound links (lowercased slug for case-insensitive match)
     const inbound = inboundCounts.get(p.slug.toLowerCase()) ?? 0
-    if (inbound === 0) {
+    if (isContentPage && inbound === 0) {
       const suggestedSource = suggestRelatedPage(p, "source")
       results.push({
         type: "orphan",
@@ -264,7 +270,7 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
     }
 
     // No outbound links
-    if (p.outlinks.length === 0) {
+    if (isContentPage && p.outlinks.length === 0) {
       const suggestedTarget = suggestRelatedPage(p, "target")
       results.push({
         type: "no-outlinks",
@@ -333,7 +339,7 @@ export async function runSemanticLint(
   const summaries: string[] = []
   for (const f of wikiFiles) {
     try {
-      const content = await readFile(f.path)
+      const content = await readTextFileLimited(f.path, MAX_LINT_MARKDOWN_BYTES)
       const preview = content.slice(0, 500) + (content.length > 500 ? "..." : "")
       const shortPath = getRelativePath(f.path, wikiRoot)
       summaries.push(`### ${shortPath}\n${preview}`)

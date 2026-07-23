@@ -1,18 +1,19 @@
 [package]
-name = "llm-wiki"
+name = "potato-box"
 version = "0.4.24"
-description = "LLM Wiki - A personal knowledge base for LLM concepts"
-authors = []
+description = "A local-first AI workspace for inspectable personal knowledge bases"
+authors = ["potato box contributors"]
+license = "GPL-3.0-only"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "llm_wiki_lib"
+name = "potato_box_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "llm-wiki"
+name = "potato-box"
 path = "src/main.rs"
 
 [build-dependencies]
@@ -63,8 +64,16 @@ md-5 = "0.10"
 notify = "8"
 walkdir = "2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+
+[profile.dev]
+# The mobile-compatible crate types otherwise produce multi-gigabyte Windows
+# debug artifacts and can exhaust modest development disks during linking.
+debug = 0
 
 [profile.release]
 codegen-units = 1

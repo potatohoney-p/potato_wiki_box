@@ -5,7 +5,7 @@ import {
   getFileModifiedTime,
   getFileSize,
   readFile,
-  writeFile,
+  writeFileAtomic,
   listDirectory,
 } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
@@ -16,6 +16,7 @@ import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, normalizePath } from "@/lib/path-utils"
+import { vectorPageIdFromPath } from "@/lib/wiki-page-id"
 import {
   sourceIdentityForPath,
   sourceSummarySlugCandidatesFromIdentity,
@@ -468,16 +469,66 @@ export function languageRule(sourceContent: string = ""): string {
  * "updated" index based on the same pre-state and overwrite each
  * other's additions.
  */
+export interface IngestFileMutation {
+  /** Project-relative wiki path. */
+  path: string
+  /** Exact content before the first write, or null when the file was new. */
+  previousContent: string | null
+}
+
 export async function autoIngest(
   projectPath: string,
   sourcePath: string,
   llmConfig: LlmConfig,
   signal?: AbortSignal,
   folderContext?: string,
+  onFileMutation?: (mutation: IngestFileMutation) => void,
 ): Promise<string[]> {
-  return withProjectLock(normalizePath(projectPath), () =>
-    autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext),
-  )
+  return withProjectLock(normalizePath(projectPath), async () => {
+    const mutations: IngestFileMutation[] = []
+    const recordMutation = (mutation: IngestFileMutation) => {
+      mutations.push(mutation)
+      onFileMutation?.(mutation)
+    }
+    try {
+      return await autoIngestImpl(
+        projectPath,
+        sourcePath,
+        llmConfig,
+        signal,
+        folderContext,
+        recordMutation,
+      )
+    } catch (error) {
+      await rollbackAutoIngestMutations(projectPath, mutations)
+      throw error
+    }
+  })
+}
+
+async function rollbackAutoIngestMutations(
+  projectPath: string,
+  mutations: readonly IngestFileMutation[],
+): Promise<void> {
+  const pp = normalizePath(projectPath)
+  const failures: string[] = []
+  for (const mutation of [...mutations].reverse()) {
+    const fullPath = `${pp}/${normalizePath(mutation.path).replace(/^\/+/, "")}`
+    try {
+      if (mutation.previousContent === null) {
+        await deleteFile(fullPath)
+      } else {
+        await writeFileAtomic(fullPath, mutation.previousContent)
+      }
+    } catch (error) {
+      failures.push(
+        `${mutation.path}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`Ingest rollback failed (${failures.join("; ")})`)
+  }
 }
 
 async function autoIngestImpl(
@@ -486,6 +537,7 @@ async function autoIngestImpl(
   llmConfig: LlmConfig,
   signal?: AbortSignal,
   folderContext?: string,
+  onFileMutation?: (mutation: IngestFileMutation) => void,
 ): Promise<string[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
@@ -521,7 +573,7 @@ async function autoIngestImpl(
         sourceSummarySlug,
       })
       await createDirectory(`${cacheDir}/.cache`)
-      await writeFile(cachePath, markdown)
+      await writeFileAtomic(cachePath, markdown)
       mineruSucceeded = true
       console.log(`[ingest:mineru] cached MinerU output for "${fileName}" (${markdown.length} chars)`)
     } catch (err) {
@@ -611,7 +663,13 @@ async function autoIngestImpl(
               )
             }
           }
-          await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
+          await injectImagesIntoSourceSummary(
+            pp,
+            sourceIdentity,
+            sourceSummarySlug,
+            savedImages,
+            onFileMutation,
+          )
           // Re-embed the source-summary page so caption text lands
           // in the search index. Without this step, search by image
           // content stays empty for files ingested before captioning
@@ -675,7 +733,7 @@ async function autoIngestImpl(
   // Now that read_file's combined extraction has put `![](abs_path)`
   // markers inline in `sourceContent`, walk them and replace the
   // empty alt text with a vision-model-generated factual caption.
-  // SHA-256-keyed cache (`<project>/.llm-wiki/image-caption-cache.json`)
+  // SHA-256-keyed cache (`<project>/.potato-box/image-caption-cache.json`)
   // dedupes across runs and across documents (shared logos / chart
   // templates caption once, not once per document).
   //
@@ -885,6 +943,24 @@ async function autoIngestImpl(
     throw new Error(generationActivity.detail || "Generation stream failed")
   }
 
+  // Validate the complete stream before the fallback source-summary can make
+  // a malformed response look successful. A response with no usable FILE
+  // block is a failed generation; a partially truncated response may write
+  // its complete blocks, but it is never committed to the ingest cache.
+  const generationContract = parseFileBlocks(generation)
+  if (generationContract.blocks.length === 0) {
+    throw new Error(
+      generationContract.warnings[0]
+        || "Generation returned no complete FILE blocks",
+    )
+  }
+  const generationIsComplete = generationContract.warnings.length === 0
+  if (!generationIsComplete) {
+    throw new Error(
+      `Generation was incomplete and was not written: ${generationContract.warnings.join(" | ")}`,
+    )
+  }
+
   let reviewSuggestionOutput = ""
   if (!signal?.aborted && shouldRunDedicatedReviewStage(generation)) {
     let reviewStageHadError = false
@@ -934,7 +1010,12 @@ async function autoIngestImpl(
 
   // ── Step 3: Write files ───────────────────────────────────────
   activity.updateItem(activityId, { detail: "Writing files..." })
-  await migrateLegacySourceSummaryIfSafe(pp, sourceIdentity, sourceSummaryPath)
+  await migrateLegacySourceSummaryIfSafe(
+    pp,
+    sourceIdentity,
+    sourceSummaryPath,
+    onFileMutation,
+  )
   const writeResult = await writeFileBlocks(
     pp,
     generation,
@@ -942,10 +1023,16 @@ async function autoIngestImpl(
     sourceIdentity,
     sourceSummaryPath,
     signal,
+    onFileMutation,
   )
   const writtenPaths = writeResult.writtenPaths
   const writeWarnings = writeResult.warnings
   const hardFailures = writeResult.hardFailures
+  if (hardFailures.length > 0) {
+    const detail = `Failed to write ${hardFailures.join(", ")}`
+    activity.updateItem(activityId, { status: "error", detail })
+    throw new Error(detail)
+  }
 
   const aggregateRepairPaths = aggregatePathsNeedingRepair(writtenPaths, writeWarnings)
   const repairableAggregatePaths = aggregateRepairPaths.filter((path) =>
@@ -1015,10 +1102,16 @@ async function autoIngestImpl(
           sourceIdentity,
           sourceSummaryPath,
           signal,
+          onFileMutation,
         )
         writtenPaths.push(...repairResult.writtenPaths)
         writeWarnings.push(...repairResult.warnings)
         hardFailures.push(...repairResult.hardFailures)
+        if (repairResult.hardFailures.length > 0) {
+          throw new Error(
+            `Aggregate repair failed to write ${repairResult.hardFailures.join(", ")}`,
+          )
+        }
       }
     } catch (err) {
       if (signal?.aborted) throw err
@@ -1068,10 +1161,14 @@ async function autoIngestImpl(
       "",
     ].join("\n")
     try {
-      await writeFile(sourceSummaryFullPath, fallbackContent)
+      const previousContent = await tryReadOptionalFile(sourceSummaryFullPath)
+      onFileMutation?.({ path: sourceSummaryPath, previousContent })
+      await writeFileAtomic(sourceSummaryFullPath, fallbackContent)
       writtenPaths.push(sourceSummaryPath)
-    } catch {
-      // non-critical
+    } catch (error) {
+      throw new Error(
+        `Failed to write required source summary: ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
   }
 
@@ -1081,7 +1178,13 @@ async function autoIngestImpl(
   // want the safety-net section to slip image refs into the wiki
   // through the back door.
   if (mmCfg.enabled && savedImages.length > 0 && !signal?.aborted) {
-    await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
+    await injectImagesIntoSourceSummary(
+      pp,
+      sourceIdentity,
+      sourceSummarySlug,
+      savedImages,
+      onFileMutation,
+    )
   }
 
   if (writtenPaths.length > 0) {
@@ -1112,7 +1215,7 @@ async function autoIngestImpl(
   // mismatch, path-traversal rejection, empty-path) are NOT failures
   // — they represent deterministic decisions and caching them is
   // safe.
-  if (writtenPaths.length > 0 && hardFailures.length === 0) {
+  if (writtenPaths.length > 0 && hardFailures.length === 0 && generationIsComplete) {
     await saveIngestCache(pp, sourceIdentity, sourceContent, writtenPaths)
     if (longSourceCheckpointPath) {
       await clearLongSourceCheckpoint(longSourceCheckpointPath)
@@ -1120,6 +1223,10 @@ async function autoIngestImpl(
   } else if (hardFailures.length > 0) {
     console.warn(
       `[ingest] Skipping cache save for "${sourceIdentity}" — ${hardFailures.length} block(s) failed to write: ${hardFailures.join(", ")}`,
+    )
+  } else if (!generationIsComplete) {
+    console.warn(
+      `[ingest] Skipping cache save for "${sourceIdentity}" because generation was incomplete: ${generationContract.warnings.join(" | ")}`,
     )
   }
 
@@ -1129,7 +1236,7 @@ async function autoIngestImpl(
     try {
       const { embedPage } = await import("@/lib/embedding")
       for (const wpath of writtenPaths) {
-        const pageId = wpath.split("/").pop()?.replace(/\.md$/, "") ?? ""
+        const pageId = vectorPageIdFromPath(wpath, "wiki")
         if (!pageId || ["index", "log", "overview"].includes(pageId)) continue
         try {
           const content = await readFile(`${pp}/${wpath}`)
@@ -1146,7 +1253,7 @@ async function autoIngestImpl(
   }
 
   const detail = writtenPaths.length > 0
-    ? `${writtenPaths.length} files written${reviewItems.length > 0 ? `, ${reviewItems.length} review item(s)` : ""}`
+    ? `${writtenPaths.length} files written${reviewItems.length > 0 ? `, ${reviewItems.length} review item(s)` : ""}${generationIsComplete ? "" : "; incomplete generation was not cached"}`
     : "No files generated"
 
   activity.updateItem(activityId, {
@@ -1283,11 +1390,19 @@ async function migrateLegacySourceSummaryIfSafe(
   projectPath: string,
   sourceIdentity: string,
   sourceSummaryPath: string,
+  onFileMutation?: (mutation: IngestFileMutation) => void,
 ): Promise<void> {
   const normalizedIdentity = normalizePath(sourceIdentity)
   if (!normalizedIdentity.includes("/")) return
 
-  if (await migrateExactLegacySourceSummaryIfSafe(projectPath, normalizedIdentity, sourceSummaryPath)) {
+  if (
+    await migrateExactLegacySourceSummaryIfSafe(
+      projectPath,
+      normalizedIdentity,
+      sourceSummaryPath,
+      onFileMutation,
+    )
+  ) {
     return
   }
 
@@ -1331,12 +1446,16 @@ async function migrateLegacySourceSummaryIfSafe(
   if (!legacyOnlyReferencesBasename) return
 
   try {
-    await writeFile(canonicalFullPath, canonicalizeSourcesField(legacyContent, sourceIdentity))
+    onFileMutation?.({ path: sourceSummaryPath, previousContent: null })
+    await writeFileAtomic(
+      canonicalFullPath,
+      canonicalizeSourcesField(legacyContent, sourceIdentity),
+    )
+    onFileMutation?.({ path: legacyPath, previousContent: legacyContent })
     await deleteFile(legacyFullPath)
   } catch (err) {
-    console.warn(
-      `[ingest] failed to migrate legacy source summary ${legacyPath} -> ${sourceSummaryPath}:`,
-      err instanceof Error ? err.message : err,
+    throw new Error(
+      `Failed to migrate legacy source summary ${legacyPath} -> ${sourceSummaryPath}: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
 }
@@ -1345,6 +1464,7 @@ async function migrateExactLegacySourceSummaryIfSafe(
   projectPath: string,
   sourceIdentity: string,
   sourceSummaryPath: string,
+  onFileMutation?: (mutation: IngestFileMutation) => void,
 ): Promise<boolean> {
   const pp = normalizePath(projectPath)
   const canonicalFullPath = `${pp}/${sourceSummaryPath}`
@@ -1378,15 +1498,18 @@ async function migrateExactLegacySourceSummaryIfSafe(
     if (!referencesSameSource) continue
 
     try {
-      await writeFile(canonicalFullPath, canonicalizeSourcesField(legacyContent, sourceIdentity))
+      onFileMutation?.({ path: sourceSummaryPath, previousContent: null })
+      await writeFileAtomic(
+        canonicalFullPath,
+        canonicalizeSourcesField(legacyContent, sourceIdentity),
+      )
+      onFileMutation?.({ path: legacyPath, previousContent: legacyContent })
       await deleteFile(legacyFullPath)
       return true
     } catch (err) {
-      console.warn(
-        `[ingest] failed to migrate legacy source summary ${legacyPath} -> ${sourceSummaryPath}:`,
-        err instanceof Error ? err.message : err,
+      throw new Error(
+        `Failed to migrate legacy source summary ${legacyPath} -> ${sourceSummaryPath}: ${err instanceof Error ? err.message : String(err)}`,
       )
-      return false
     }
   }
 
@@ -1474,6 +1597,7 @@ async function writeFileBlocks(
   sourceFileName: string,
   sourceSummaryPath?: string,
   signal?: AbortSignal,
+  onFileMutation?: (mutation: IngestFileMutation) => void,
 ): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
   const { blocks, warnings: parseWarnings } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
@@ -1567,9 +1691,12 @@ async function writeFileBlocks(
     const fullPath = `${projectPath}/${relativePath}`
     try {
       if (isLogPath(relativePath)) {
-        const existing = await tryReadFile(fullPath)
-        const appended = existing ? `${existing}\n\n${content.trim()}` : content.trim()
-        await writeFile(fullPath, appended)
+        const previousContent = await tryReadOptionalFile(fullPath)
+        const appended = previousContent
+          ? `${previousContent}\n\n${content.trim()}`
+          : content.trim()
+        onFileMutation?.({ path: relativePath, previousContent })
+        await writeFileAtomic(fullPath, appended)
       } else if (
         isListingPath(relativePath)
       ) {
@@ -1577,7 +1704,9 @@ async function writeFileBlocks(
         // wholesale — their sources field is incidental and merging
         // wouldn't make semantic sense (they aren't source-derived
         // content pages).
-        await writeFile(fullPath, content)
+        const previousContent = await tryReadOptionalFile(fullPath)
+        onFileMutation?.({ path: relativePath, previousContent })
+        await writeFileAtomic(fullPath, content)
       } else {
         // Content pages (entities / concepts / queries / synthesis /
         // comparisons / sources summaries): if a page with this
@@ -1594,10 +1723,10 @@ async function writeFileBlocks(
         // LLM failure / sanity rejection falls back to "incoming
         // body + array-field union" with a best-effort backup.
         // See page-merge.ts.
-        const existing = await tryReadFile(fullPath)
+        const previousContent = await tryReadOptionalFile(fullPath)
         const toWrite = await mergePageContent(
           content,
-          existing || null,
+          previousContent,
           buildPageMerger(llmConfig),
           {
             sourceFileName,
@@ -1606,7 +1735,8 @@ async function writeFileBlocks(
             backup: (oldContent) => backupExistingPage(projectPath, relativePath, oldContent),
           },
         )
-        await writeFile(fullPath, toWrite)
+        onFileMutation?.({ path: relativePath, previousContent })
+        await writeFileAtomic(fullPath, toWrite)
       }
       writtenPaths.push(relativePath)
     } catch (err) {
@@ -2044,6 +2174,14 @@ async function tryReadFile(path: string): Promise<string> {
   }
 }
 
+async function tryReadOptionalFile(path: string): Promise<string | null> {
+  try {
+    return await readFile(path)
+  } catch {
+    return null
+  }
+}
+
 async function tryReadSourceTextFile(path: string): Promise<string> {
   try {
     return await readFile(path, { extractImages: false })
@@ -2231,7 +2369,7 @@ function longSourceCheckpointPath(
   sourceSummarySlug: string,
   sourceHash: string,
 ): string {
-  return `${normalizePath(projectPath)}/.llm-wiki/ingest-progress/${sourceSummarySlug}-${sourceHash}.json`
+  return `${normalizePath(projectPath)}/.potato-box/ingest-progress/${sourceSummarySlug}-${sourceHash}.json`
 }
 
 function isCompatibleLongSourceCheckpoint(
@@ -2280,7 +2418,7 @@ async function saveLongSourceCheckpoint(
 ): Promise<void> {
   const dir = checkpointPath.split("/").slice(0, -1).join("/")
   await createDirectory(dir)
-  await writeFile(checkpointPath, JSON.stringify(checkpoint, null, 2))
+  await writeFileAtomic(checkpointPath, JSON.stringify(checkpoint, null, 2))
 }
 
 async function clearLongSourceCheckpoint(checkpointPath: string): Promise<void> {
@@ -2568,7 +2706,7 @@ function buildPageMerger(llmConfig: LlmConfig): MergeFn {
 
 /**
  * Best-effort snapshot of a page before a fallback merge overwrites
- * it. Saved to `.llm-wiki/page-history/<sanitized-path>-<timestamp>.md`
+ * it. Saved to `.potato-box/page-history/<sanitized-path>-<timestamp>.md`
  * so a user who later notices content lost in a merge can recover it.
  * Errors are swallowed by the caller (page-merge's tryBackup).
  */
@@ -2579,8 +2717,8 @@ async function backupExistingPage(
 ): Promise<void> {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-")
   const sanitized = relativePath.replace(/[/\\]/g, "_")
-  const backupPath = `${projectPath}/.llm-wiki/page-history/${sanitized}-${stamp}`
-  await writeFile(backupPath, existingContent)
+  const backupPath = `${projectPath}/.potato-box/page-history/${sanitized}-${stamp}`
+  await writeFileAtomic(backupPath, existingContent)
 }
 
 /**
@@ -2602,13 +2740,15 @@ async function injectImagesIntoSourceSummary(
   sourceIdentity: string,
   sourceSummarySlug: string,
   savedImages: { relPath: string; page: number | null; sha256?: string }[],
+  onFileMutation?: (mutation: IngestFileMutation) => void,
 ): Promise<void> {
   if (savedImages.length === 0) return
   const sourceSummaryPath = `wiki/sources/${sourceSummarySlug}.md`
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
   console.log(`[ingest:diag] injectImagesIntoSourceSummary: target=${sourceSummaryFullPath}, images=${savedImages.length}`)
   try {
-    const existing = await tryReadFile(sourceSummaryFullPath)
+    const previousContent = await tryReadOptionalFile(sourceSummaryFullPath)
+    const existing = previousContent ?? ""
     console.log(`[ingest:diag] injectImagesIntoSourceSummary: existing file ${existing ? `read OK (${existing.length} chars)` : "MISSING (will write stub)"}`)
     // Load captions from the on-disk cache so the safety-net
     // section embeds caption text as alt — the embedding pipeline
@@ -2623,16 +2763,19 @@ async function injectImagesIntoSourceSummary(
       })) as never,
       captionsBySha,
     )
-    const marker = "<!-- llm-wiki:embedded-images -->"
+    const marker = "<!-- potato-box:embedded-images -->"
+    const legacyMarker = "<!-- llm-wiki:embedded-images -->"
     const wrapped = `\n\n${marker}\n${newSection.trim()}\n${marker}\n`
     if (existing) {
       // Strip any prior injection (paired markers) so re-ingest
       // doesn't accumulate stale references when images change.
-      const stripped = existing.replace(
-        new RegExp(`\\n*${marker}[\\s\\S]*?${marker}\\n*`, "g"),
-        "",
+      const stripped = [marker, legacyMarker].reduce(
+        (content, candidate) =>
+          content.replace(new RegExp(`\\n*${candidate}[\\s\\S]*?${candidate}\\n*`, "g"), ""),
+        existing,
       )
-      await writeFile(sourceSummaryFullPath, stripped.trimEnd() + wrapped)
+      onFileMutation?.({ path: sourceSummaryPath, previousContent })
+      await writeFileAtomic(sourceSummaryFullPath, stripped.trimEnd() + wrapped)
     } else {
       // Page is missing — write a minimal stub so the user actually
       // sees the images in the file tree. Without this fallback, the
@@ -2655,15 +2798,15 @@ async function injectImagesIntoSourceSummary(
         `# Source: ${sourceIdentity}`,
         "",
       ].join("\n")
-      await writeFile(sourceSummaryFullPath, stubFrontmatter + wrapped)
+      onFileMutation?.({ path: sourceSummaryPath, previousContent })
+      await writeFileAtomic(sourceSummaryFullPath, stubFrontmatter + wrapped)
     }
     console.log(
       `[ingest:images] injected ${savedImages.length} image reference(s) into ${sourceSummaryPath}`,
     )
   } catch (err) {
-    console.warn(
-      `[ingest:images] failed to append images to ${sourceSummaryPath}:`,
-      err instanceof Error ? err.message : err,
+    throw new Error(
+      `Failed to append images to ${sourceSummaryPath}: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
 }
@@ -2697,7 +2840,13 @@ async function reembedSourceSummary(
     )
     const title = titleMatch ? titleMatch[1].trim() : sourceIdentity
     const { embedPage } = await import("@/lib/embedding")
-    await embedPage(pp, sourceSummarySlug, title, content, embCfg)
+    await embedPage(
+      pp,
+      vectorPageIdFromPath(sourceSummaryFullPath, `${pp}/wiki`),
+      title,
+      content,
+      embCfg,
+    )
     console.log(`[ingest:caption] re-embedded ${sourceSummarySlug} with captioned alt text`)
   } catch (err) {
     console.warn(
@@ -2928,9 +3077,9 @@ export async function executeIngestWrites(
         const appended = existing
           ? `${existing}\n\n${content.trim()}`
           : content.trim()
-        await writeFile(fullPath, appended)
+        await writeFileAtomic(fullPath, appended)
       } else {
-        await writeFile(fullPath, content)
+        await writeFileAtomic(fullPath, content)
       }
       writtenPaths.push(fullPath)
     } catch (err) {

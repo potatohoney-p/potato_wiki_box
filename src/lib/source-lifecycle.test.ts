@@ -147,6 +147,40 @@ describe("source-lifecycle path helpers", () => {
     expect(mocks.copyFile).not.toHaveBeenCalled()
   })
 
+  it("allocates a unique root instead of overwriting an existing folder import", async () => {
+    mocks.fileExists
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+    mocks.listDirectory.mockResolvedValue([
+      { name: "report.md", path: "/external/reports/report.md", is_dir: false },
+    ])
+
+    const copied = await importSourceFolder(
+      { id: "p1", name: "Project", path: "/project" },
+      "/external/reports",
+      {
+        provider: "openai",
+        endpoint: "https://api.example.com/v1",
+        apiKey: "key",
+        model: "model",
+      } as never,
+    )
+
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
+    const uniqueRoot = `/project/raw/sources/reports-${date}`
+    expect(copied).toEqual([`${uniqueRoot}/report.md`])
+    expect(mocks.copyFile).toHaveBeenCalledWith(
+      "/external/reports/report.md",
+      `${uniqueRoot}/report.md`,
+    )
+    expect(mocks.enqueueBatch).toHaveBeenCalledWith("p1", [
+      {
+        sourcePath: `${uniqueRoot}/report.md`,
+        folderContext: `reports-${date}`,
+      },
+    ])
+  })
+
   it("filters single-file imports using the original source path before copying", async () => {
     const copied = await importSourceFiles(
       { id: "p1", name: "Project", path: "/project" },

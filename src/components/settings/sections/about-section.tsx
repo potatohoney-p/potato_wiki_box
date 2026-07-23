@@ -8,11 +8,16 @@ import { API_SERVER_HEALTH_URL, API_SERVER_PORT } from "@/lib/api-server-constan
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { checkForUpdates, toLatestReleaseUrl } from "@/lib/update-check"
 import { saveUpdateCheckState } from "@/lib/project-store"
+import {
+  MODIFICATION_COPYRIGHT,
+  RELEASE_REPOSITORY,
+  REPOSITORY_URL,
+  UPSTREAM_COPYRIGHT,
+} from "@/lib/brand"
 
 interface ApiHealth {
   enabled?: boolean
   authConfigured?: boolean
-  allowUnauthenticated?: boolean
 }
 
 export function AboutSection() {
@@ -52,10 +57,11 @@ export function AboutSection() {
   }, [])
 
   const handleCheckNow = useCallback(async () => {
+    if (!RELEASE_REPOSITORY) return
     useUpdateStore.getState().setChecking(true)
     const result = await checkForUpdates({
       currentVersion: __APP_VERSION__,
-      repo: "nashsu/llm_wiki",
+      repo: RELEASE_REPOSITORY,
     })
     const now = Date.now()
     useUpdateStore.getState().setResult(result, now)
@@ -95,17 +101,14 @@ export function AboutSection() {
     if (apiStatus === "running" && apiHealth?.enabled === false) {
       return t("settings.sections.about.apiDisabled")
     }
-    if (apiStatus === "running" && apiHealth?.allowUnauthenticated) {
-      return t("settings.sections.about.apiOpen")
-    }
     if (apiStatus === "running" && apiHealth?.authConfigured === false) {
       return t("settings.sections.about.apiNoToken")
     }
-    return apiStatus
+    return t(`health.status.${apiStatus}`, { defaultValue: apiStatus })
   })()
   const rows: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: t("settings.sections.about.version"), value: `v${__APP_VERSION__}`, mono: true },
-    { label: t("settings.sections.about.clipServer"), value: `${clipStatus}  @  127.0.0.1:19827`, mono: true },
+    { label: t("settings.sections.about.clipServer"), value: `${t(`health.status.${clipStatus}`, { defaultValue: clipStatus })}  @  127.0.0.1:19827`, mono: true },
     { label: t("settings.sections.about.apiServer"), value: `${apiStatusDisplay}  @  127.0.0.1:${API_SERVER_PORT}`, mono: true },
   ]
 
@@ -158,7 +161,7 @@ export function AboutSection() {
             variant="outline"
             size="sm"
             onClick={handleCheckNow}
-            disabled={updateStore.checking}
+            disabled={updateStore.checking || !RELEASE_REPOSITORY}
             className="shrink-0 gap-1.5"
           >
             <RefreshCw
@@ -187,6 +190,12 @@ export function AboutSection() {
           </div>
         )}
 
+        {!RELEASE_REPOSITORY && (
+          <div className="rounded border px-3 py-2 text-xs text-muted-foreground" role="status">
+            {t("settings.sections.about.updateChannelUnavailable")}
+          </div>
+        )}
+
         {/* error state intentionally has no banner — see the timestamp
             line above for the muted "couldn't reach GitHub" hint. GitHub
             is regularly unreachable from certain networks (notably
@@ -196,8 +205,9 @@ export function AboutSection() {
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <input
             type="checkbox"
-            checked={updateStore.enabled}
+            checked={updateStore.enabled && Boolean(RELEASE_REPOSITORY)}
             onChange={handleToggleAutoCheck}
+            disabled={!RELEASE_REPOSITORY}
             className="h-3.5 w-3.5"
           />
           {t("settings.sections.about.autoCheck")}
@@ -205,10 +215,9 @@ export function AboutSection() {
       </div>
 
       <div className="rounded-md border p-4 text-sm">
-        <div className="font-medium">LLM Wiki</div>
+        <div className="font-medium">potato box</div>
         <p className="mt-1 text-xs text-muted-foreground">
           {t("settings.sections.about.appDescription")}
-          {" "}
           {/*
            * Tauri 2's webview doesn't honor `target="_blank"` for
            * external URLs by default — clicking would either do
@@ -217,18 +226,36 @@ export function AboutSection() {
            * via onClick + preventDefault so it always lands in the
            * system browser.
            */}
-          <a
-            className="cursor-pointer underline underline-offset-2 hover:text-primary"
-            href="https://github.com/nashsu/llm_wiki"
-            onClick={(e) => {
-              e.preventDefault()
-              void openUrl("https://github.com/nashsu/llm_wiki").catch((err) => {
-                console.error("[about] openUrl failed:", err)
-              })
-            }}
-          >
-            github.com/nashsu/llm_wiki
-          </a>
+          {REPOSITORY_URL && (
+            <>
+              {" "}{t("settings.sections.about.sourceLabel")}{" "}
+              <a
+                className="cursor-pointer underline underline-offset-2 hover:text-primary"
+                href={REPOSITORY_URL}
+                onClick={(e) => {
+                  e.preventDefault()
+                  const url = REPOSITORY_URL
+                  if (!url) return
+                  void openUrl(url).catch((err) => {
+                    console.error("[about] openUrl failed:", err)
+                  })
+                }}
+              >
+                {RELEASE_REPOSITORY}
+              </a>
+            </>
+          )}
+        </p>
+      </div>
+
+      <div className="rounded-md border p-4 text-sm">
+        <div className="font-medium">{t("settings.sections.about.legalTitle")}</div>
+        <p className="mt-1 text-xs text-muted-foreground">{MODIFICATION_COPYRIGHT}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t("settings.sections.about.modifiedWork", { upstream: UPSTREAM_COPYRIGHT })}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t("settings.sections.about.licenseNotice")}
         </p>
       </div>
     </div>

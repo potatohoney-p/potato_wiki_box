@@ -1,5 +1,37 @@
 import { describe, it, expect } from "vitest"
-import { transformImageEmbeds, transformWikilinks } from "./wikilink-transform"
+import {
+  stripHtmlComments,
+  transformImageEmbeds,
+  transformWikilinks,
+} from "./wikilink-transform"
+
+describe("stripHtmlComments", () => {
+  it("hides single-line and multiline comments without collapsing lines", () => {
+    expect(stripHtmlComments("# Overview\n\n<!-- hidden -->\nVisible")).toBe(
+      "# Overview\n\n\nVisible",
+    )
+    expect(stripHtmlComments("Before<!-- first\nsecond -->After")).toBe(
+      "Before\nAfter",
+    )
+  })
+
+  it("preserves literal comment examples in fenced, inline, and indented code", () => {
+    const markdown = [
+      "```html",
+      "<!-- fenced -->",
+      "```",
+      "Use `<!-- inline -->`.",
+      "    <!-- indented -->",
+    ].join("\n")
+    expect(stripHtmlComments(markdown)).toBe(markdown)
+  })
+
+  it("strips an unclosed comment safely", () => {
+    expect(stripHtmlComments("Visible\n<!-- unfinished\nhidden")).toBe(
+      "Visible\n\n",
+    )
+  })
+})
 
 describe("transformWikilinks", () => {
   it("returns input unchanged when there are no wikilinks", () => {

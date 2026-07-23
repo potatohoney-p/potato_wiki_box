@@ -7,7 +7,7 @@ vi.mock("./dedup-runner", () => ({
 
 vi.mock("@/commands/fs", () => ({
   readFile: vi.fn(),
-  writeFile: vi.fn(),
+  writeFileAtomic: vi.fn(),
 }))
 
 const TEST_ID = "test-project-uuid"
@@ -37,13 +37,13 @@ import {
   restoreQueue,
 } from "./dedup-queue"
 import { executeMerge } from "./dedup-runner"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile, writeFileAtomic } from "@/commands/fs"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { DuplicateGroup } from "./dedup"
 
 const mockExecuteMerge = vi.mocked(executeMerge)
 const mockReadFile = vi.mocked(readFile)
-const mockWriteFile = vi.mocked(writeFile)
+const mockWriteFile = vi.mocked(writeFileAtomic)
 
 function makeGroup(slugs: string[]): DuplicateGroup {
   return { slugs, confidence: "high", reason: "test" }
@@ -74,6 +74,17 @@ beforeEach(async () => {
 })
 
 describe("dedup-queue — basic enqueue + processing", () => {
+  it("does not report enqueue success when its durable checkpoint fails", async () => {
+    mockWriteFile.mockRejectedValueOnce(new Error("disk full"))
+
+    await expect(
+      enqueueMerge(TEST_ID, makeGroup(["a", "b"]), "a"),
+    ).rejects.toThrow("disk full")
+
+    expect(getQueue()).toHaveLength(0)
+    expect(mockExecuteMerge).not.toHaveBeenCalled()
+  })
+
   it("processes a queued merge and removes the task on success", async () => {
     mockExecuteMerge.mockResolvedValue({
       canonicalContent: "x",
@@ -253,6 +264,29 @@ describe("dedup-queue — cancel / delete", () => {
     expect(receivedSignal?.aborted).toBe(true)
     expect(getQueue().find((t) => t.id === id)).toBeUndefined()
   })
+
+  it("waits for the active writer to settle before removing its task", async () => {
+    const settled = createDeferred<never>()
+    mockExecuteMerge.mockImplementation(async (_pp, _g, _slug, _llm, opts) => {
+      opts?.signal?.addEventListener("abort", () => undefined)
+      return settled.promise
+    })
+
+    const id = await enqueueMerge(TEST_ID, makeGroup(["a", "b"]), "a")
+    await flushMicrotasks(5)
+
+    let cancellationFinished = false
+    const cancellation = cancelTask(id).then(() => {
+      cancellationFinished = true
+    })
+    await flushMicrotasks(5)
+    expect(cancellationFinished).toBe(false)
+    expect(getQueue().find((task) => task.id === id)).toBeDefined()
+
+    settled.reject(new Error("rollback complete"))
+    await cancellation
+    expect(getQueue().find((task) => task.id === id)).toBeUndefined()
+  })
 })
 
 describe("dedup-queue — pauseQueue / restoreQueue", () => {
@@ -263,8 +297,14 @@ describe("dedup-queue — pauseQueue / restoreQueue", () => {
         captured = content
       }
     })
-    // Hold execution so the task stays pending across pause.
-    mockExecuteMerge.mockImplementation(() => new Promise(() => {}))
+    // Hold execution until pause aborts the active writer.
+    mockExecuteMerge.mockImplementation((_pp, _g, _slug, _llm, opts) =>
+      new Promise<never>((_resolve, reject) => {
+        opts?.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        })
+      }),
+    )
 
     await enqueueMerge(TEST_ID, makeGroup(["a", "b"]), "a")
     await flushMicrotasks(5)
@@ -283,6 +323,24 @@ describe("dedup-queue — pauseQueue / restoreQueue", () => {
     const restored = getQueue()
     expect(restored).toHaveLength(1)
     expect(restored[0].group.slugs).toEqual(["a", "b"])
+  })
+
+  it("keeps the active queue when its project-switch write fails", async () => {
+    mockExecuteMerge.mockImplementation((_pp, _g, _slug, _llm, opts) =>
+      new Promise<never>((_resolve, reject) => {
+        opts?.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        })
+      }),
+    )
+    await enqueueMerge(TEST_ID, makeGroup(["a", "b"]), "a")
+    await flushMicrotasks(5)
+    mockWriteFile.mockRejectedValueOnce(new Error("disk full"))
+
+    await expect(pauseQueue()).rejects.toThrow("disk full")
+
+    expect(getQueue()).toHaveLength(1)
+    expect(getQueue()[0].status).toBe("pending")
   })
 
   it("restoreQueue reverts processing tasks to pending so they re-run", async () => {
@@ -317,7 +375,13 @@ describe("dedup-queue — pauseQueue / restoreQueue", () => {
   })
 
   it("does not leak tasks across project switch", async () => {
-    mockExecuteMerge.mockImplementation(() => new Promise(() => {}))
+    mockExecuteMerge.mockImplementation((_pp, _g, _slug, _llm, opts) =>
+      new Promise<never>((_resolve, reject) => {
+        opts?.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        })
+      }),
+    )
 
     await enqueueMerge(TEST_ID, makeGroup(["a", "b"]), "a")
     expect(getQueueSummary().total).toBe(1)

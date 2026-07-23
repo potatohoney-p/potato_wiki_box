@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "LLM Wiki",
-    "subtitle": "用 LLM 构建和维护你的个人知识库"
+    "title": "potato box",
+    "subtitle": "将资料整理为本地、可检查的知识库"
   },
   "nav": {
     "chat": "对话",
@@ -11,10 +11,70 @@
     "graph": "关系图",
     "lint": "检查",
     "review": "待审阅",
+    "health": "健康状态",
     "settings": "设置",
     "switchProject": "切换项目",
     "updateAvailable": "有可用更新",
-    "updateAvailableSuffix": " · 有更新"
+    "updateAvailableSuffix": " · 有更新",
+    "clipServerRunning": "网页剪藏服务正在运行",
+    "clipServerStarting": "网页剪藏服务正在启动...",
+    "clipServerPortConflict": "端口 19827 已被占用，网页剪藏暂不可用。",
+    "clipServerError": "网页剪藏服务异常，正在重启..."
+  },
+  "health": {
+    "title": "知识库健康状态",
+    "refresh": "刷新",
+    "scanning": "正在扫描项目...",
+    "score": "健康分数",
+    "pages": "Wiki 页面",
+    "sources": "源文件",
+    "provenance": "来源覆盖率",
+    "services": "本地服务",
+    "serviceLabels": {
+      "clipper": "网页剪藏",
+      "api": "API",
+      "llm": "LLM",
+      "fileSync": "文件同步"
+    },
+    "status": {
+      "running": "运行中",
+      "ready": "就绪",
+      "error": "错误",
+      "disabled": "已禁用",
+      "notConfigured": "未配置",
+      "stopped": "已停止",
+      "starting": "启动中"
+    },
+    "findings": {
+      "title": "发现",
+      "clear": "没有需要处理的健康问题。",
+      "llm": "尚未配置可用的 LLM Provider。",
+      "failedTasks": "有 {{count}} 个提取任务需要处理。",
+      "brokenLinks": "发现 {{count}} 个失效 Wiki 链接。",
+      "collisions": "有 {{count}} 个重复页面文件名可能产生歧义。",
+      "provenance": "只有 {{value}}% 的内容页面声明了来源。",
+      "clips": "有 {{count}} 个网页剪藏等待提取。",
+      "orphans": "有 {{count}} 个页面没有入站链接。"
+    },
+    "operations": {
+      "title": "恢复与支持",
+      "backup": "创建备份",
+      "restore": "恢复到新文件夹",
+      "export": "导出诊断信息",
+      "copy": "复制诊断信息",
+      "backingUp": "正在创建并验证备份...",
+      "restoring": "正在验证并恢复备份...",
+      "backupVerified": "备份验证完成",
+      "backupDetails": "{{files}} 个文件，{{size}}",
+      "restored": "已恢复到新文件夹",
+      "openFolder": "打开文件夹",
+      "diagnosticsExported": "诊断信息已导出到 {{path}}",
+      "diagnosticsCopied": "诊断信息已复制"
+    }
+  },
+  "nativeRuntime": {
+    "desktopRequired": "浏览器预览无法访问系统文件夹。请使用 potato box 桌面应用创建、打开或导入项目。",
+    "directoryPickerFailed": "无法打开系统文件夹选择器：{{error}}"
   },
   "updateBanner": {
     "message": "新版本 {{version}} 已发布",
@@ -24,7 +84,8 @@
   "welcome": {
     "newProject": "新建项目",
     "openProject": "打开项目",
-    "recentProjects": "最近项目"
+    "recentProjects": "最近项目",
+    "removeRecent": "从最近项目中移除 {{name}}"
   },
   "sidebar": {
     "knowledge": "知识库",
@@ -53,7 +114,7 @@
     }
   },
   "project": {
-    "createTitle": "新建 Wiki 项目",
+    "createTitle": "新建项目",
     "name": "项目名称",
     "namePlaceholder": "my-research-wiki",
     "parentDir": "父目录",
@@ -240,15 +301,15 @@
         "title": "通用",
         "description": "桌面应用的启动和窗口关闭行为。",
         "autostart": "登录系统后自动启动",
-        "autostartHint": "登录这台电脑后自动启动 LLM Wiki。",
+        "autostartHint": "登录这台电脑后自动启动 potato box。",
         "closeBehavior": "关闭窗口时",
         "closeBehaviorHint": "点击标题栏关闭按钮时使用这个设置。托盘菜单仍可直接退出应用。",
         "closeAsk": "每次询问",
         "closeAskHint": "显示确认框。取消会隐藏窗口，并保持后台功能继续运行。",
         "closeMinimize": "隐藏窗口",
-        "closeMinimizeHint": "关闭窗口时让 LLM Wiki 留在后台运行。在 macOS 上这符合红色关闭按钮的常规行为；如果 Linux 托盘不可用，会最小化窗口而不是隐藏。",
+        "closeMinimizeHint": "关闭窗口时让 potato box 留在后台运行。在 macOS 上这符合红色关闭按钮的常规行为；如果 Linux 托盘不可用，会最小化窗口而不是隐藏。",
         "closeExit": "退出应用",
-        "closeExitHint": "关闭窗口时立即退出 LLM Wiki。"
+        "closeExitHint": "关闭窗口时立即退出 potato box。"
       },
       "llm": {
         "title": "LLM 模型",
@@ -278,7 +339,7 @@
         "providerTests": "Provider 测试",
         "providerTestsHint": "连接测试用于确认 endpoint 能正常响应；功能测试会让模型执行一个极小指令。",
         "localCliIsolation": "隔离本地 CLI 配置",
-        "localCliIsolationHint": "仅用于 Claude Code 和 Codex CLI。开启后，LLM Wiki 会让 CLI 尽量忽略用户级 rules / config / MCP / tools。这是配置隔离，不是进程沙箱：CLI 仍会使用你的本机登录凭据和网络能力。若你有意依赖本机 CLI 配置，请保持关闭。",
+        "localCliIsolationHint": "仅用于 Claude Code 和 Codex CLI。开启后，potato box 会让 CLI 尽量忽略用户级 rules / config / MCP / tools。这是配置隔离，不是进程沙箱：CLI 仍会使用你的本机登录凭据和网络能力。若你有意依赖本机 CLI 配置，请保持关闭。",
         "localCliIsolationOn": "隔离已开启：在 CLI 支持的范围内禁用用户规则、MCP/tools 和持久会话。本机凭据和网络访问仍由 CLI 自身控制。",
         "localCliIsolationOff": "隔离已关闭：该 Provider 可以使用你平时的本地 CLI 配置。",
         "codexCliTimeout": "Codex CLI 超时时间",
@@ -383,7 +444,7 @@
       },
       "webSearch": {
         "title": "外部信息源",
-        "description": "配置 LLM Wiki 可以使用的外部信息来源。",
+        "description": "配置 potato box 可以使用的外部信息来源。",
         "deepResearchSources": "深度研究来源模式",
         "deepResearchSourcesHint": "网页搜索使用当前选中的在线搜索 Provider。AnyTXT 会通过本机 ATGUI.exe 的本地索引搜索文件内容。",
         "sourceWeb": "网页搜索",
@@ -460,8 +521,8 @@
         "description": "自动监控指定目录，按固定间隔导入新增或修改的文件。",
         "enable": "启用定时导入",
         "directory": "监控目录",
-        "directoryHelp": "请选择当前 LLM Wiki 项目之外的外部文件夹。raw、raw/sources、wiki、.llm-wiki 等项目内部目录会被跳过，因为资料文件夹监控已经负责这些内容。",
-        "managedPathWarning": "该路径位于当前 LLM Wiki 项目内部，已经由资料文件夹监控负责。请选择外部文件夹，避免重复扫描。",
+        "directoryHelp": "请选择当前 potato box 项目之外的外部文件夹。raw、raw/sources、wiki、.potato-box 等项目内部目录会被跳过，因为资料文件夹监控已经负责这些内容。",
+        "managedPathWarning": "该路径位于当前 potato box 项目内部，已经由资料文件夹监控负责。请选择外部文件夹，避免重复扫描。",
         "privacyNotice": "所选目录中的文件可能会被复制到当前项目，并在提取时发送给你配置的 LLM。源目录中删除文件不会自动删除项目内已导入内容。",
         "browse": "浏览",
         "selectDirectory": "选择监控目录",
@@ -474,12 +535,11 @@
       },
       "apiServer": {
         "title": "API + MCP",
-        "description": "通过本地 HTTP API 将 LLM Wiki 开放给你的脚本和工具，也可以额外启用内置 MCP 服务供智能体客户端访问。",
+        "description": "通过本地 HTTP API 将 potato box 开放给你的脚本和工具，也可以额外启用内置 MCP 服务供智能体客户端访问。",
         "enable": "启用本地 HTTP API",
         "enableHint": "关闭后，即使已配置 token，除 /health 外的所有接口都会返回 503。可作为不清空 token 的临时关闭开关。",
         "status": "状态",
         "statusRunning": "运行中",
-        "statusOpen": "运行中，无需鉴权",
         "statusNoToken": "运行中，未配置 token",
         "statusDisabled": "已禁用",
         "statusStarting": "启动中…",
@@ -489,15 +549,13 @@
         "baseUrl": "服务地址",
         "openHealth": "打开 /health",
         "openHealthHint": "在系统浏览器中打开。/health 是唯一不需要 token 的接口。",
-        "allowUnauthenticated": "允许无 token 访问",
-        "allowUnauthenticatedHint": "仅用于可信的本地智能体。启用后，这台机器上的任何进程或浏览器页面都可以调用 API。",
         "mcpEnable": "启用 MCP 访问",
         "mcpEnableHint": "MCP 复用本地 API 和同一套 token 规则。保持 HTTP API 启用后，将 MCP 客户端连接到内置 Node 服务即可。",
         "mcpUsage": "MCP 使用说明",
-        "mcpUsageHint": "先执行一次 `npm run mcp:build`，然后让 MCP 客户端运行下面的服务配置。除非启用了无认证访问，否则需要设置 LLM_WIKI_API_TOKEN。",
-        "mcpPathUnavailable": "没有找到 MCP 服务入口。请在 LLM Wiki 仓库中先执行 `npm run mcp:build`，然后重新打开设置。",
+        "mcpUsageHint": "先执行一次 `npm run mcp:build`，然后使用 POTATO_BOX_API_TOKEN 让 MCP 客户端运行下面的服务配置。",
+        "mcpPathUnavailable": "没有找到 MCP 服务入口。请在 potato box 仓库中先执行 `npm run mcp:build`，然后重新打开设置。",
         "token": "访问令牌",
-        "tokenHint": "除非启用了无认证访问，否则必须配置。通过 `Authorization: Bearer <token>` 或 `X-LLM-Wiki-Token: <token>` 发送。设置了环境变量 LLM_WIKI_API_TOKEN 时优先生效。",
+        "tokenHint": "所有 API 和剪藏请求都必须配置。通过 `Authorization: Bearer <token>` 或 `X-Potato-Box-Token: <token>` 发送。设置了环境变量 POTATO_BOX_API_TOKEN 时优先生效。",
         "tokenPlaceholder": "粘贴已有 token，或点击生成",
         "generate": "生成新 token",
         "show": "显示",
@@ -505,25 +563,22 @@
         "copy": "复制",
         "copied": "已复制",
         "tokenMissing": "未配置 token —— 所有接口都会返回 401",
-        "tokenUnused": "启用无认证访问时，token 不会参与鉴权",
-        "envTokenActive": "LLM_WIKI_API_TOKEN 正在生效，并会覆盖此处填写的 token",
+        "envTokenActive": "POTATO_BOX_API_TOKEN 正在生效，并会覆盖此处填写的 token",
         "tokenWeak": "token 长度偏短 —— 建议使用「生成新 token」获得 256 位熵",
         "saveFirst": "保存设置后 API/MCP 改动才会生效",
         "saveFirstExample": "请先保存设置，然后再复制示例请求。",
-        "tokenWarning": "请妥善保管。任何能访问这台机器 localhost 的进程拿到 token 后，都能通过 API 读取你的项目内容。",
-        "tokenQueryWarning": "推荐使用 Authorization header —— 将 token 放在 ?token=… 查询参数里会泄露到 shell 历史、日志和 Referer。",
+        "tokenWarning": "请妥善保管。任何能访问这台机器 localhost 的进程拿到 token 后，都能通过 API 读取项目内容。URL 查询参数中的 token 会被拒绝。",
         "sample": "示例请求",
         "endpoints": "接口列表",
-        "endpointsHint": "把 {id} 替换为项目 UUID、项目文件系统路径，或字面量 'current'。",
+        "endpointsHint": "把 {id} 替换为项目 UUID 或字面量 'current'。",
         "endpointHealthNote": "存活探针。无需鉴权。",
-        "endpointProjectsNote": "列出所有已知项目及其 ID 和路径。",
+        "endpointProjectsNote": "列出所有已知项目的 UUID 和当前项目状态。",
         "endpointFilesNote": "?root=wiki|sources|all；?recursive=false；?maxFiles=N（≤10000）。",
         "endpointContentNote": "?path=wiki/index.md —— 仅文本文件，最大 2 MB。",
         "endpointReviewsNote": "?status=unresolved|resolved|all；?type=missing-page；?limit=N。默认返回未解决的 Review 项。",
         "endpointSearchNote": "JSON body：{ query, topK?, includeContent?, queryEmbedding? }。配置嵌入后使用统一的关键词 + 向量检索。",
         "endpointGraphNote": "?q=…&nodeType=…&limit=N —— 基于 wiki/*.md 的双链图谱。",
-        "endpointRescanNote": "使用你的资料文件夹监控配置触发后端重新扫描。",
-        "endpointChatNote": "尚未实现（返回 501）。"
+        "endpointRescanNote": "使用你的资料文件夹监控配置触发后端重新扫描。"
       },
       "output": {
         "title": "输出偏好",
@@ -588,7 +643,6 @@
         "clipServer": "Clip 服务",
         "apiServer": "API 服务",
         "apiDisabled": "已禁用",
-        "apiOpen": "运行中（无认证）",
         "apiNoToken": "运行中（未配置 token）",
         "updateCheck": "更新检查",
         "lastChecked": "上次检查",
@@ -601,7 +655,12 @@
         "openDownload": "打开下载页",
         "later": "稍后",
         "autoCheck": "应用启动时自动检查更新（每 6 小时最多一次）",
-        "appDescription": "一个由 LLM 驱动的个人知识库。源代码："
+        "updateChannelUnavailable": "此构建未配置发布更新渠道。",
+        "appDescription": "一个用于构建可检查知识库的本地优先 AI 工作空间。",
+        "sourceLabel": "源代码：",
+        "legalTitle": "法律声明",
+        "modifiedWork": "本项目于 2026 年基于 {{upstream}} 修改。",
+        "licenseNotice": "本软件依据 GNU GPL v3.0 发布且不提供担保。完整条款和声明随附于 LICENSE 与 NOTICE。"
       },
       "mineru": {
         "title": "MinerU PDF 解析",

@@ -78,8 +78,11 @@ const mocks = vi.hoisted(() => {
       children?: Array<{ name: string; path: string; is_dir: boolean }>
     }>),
     readFile: vi.fn(async (_path?: string) => ""),
+    fileExists: vi.fn(async (_path?: string) => false),
     getFileSize: vi.fn(async (_path?: string) => 1024),
     writeFile: vi.fn(async () => undefined),
+    writeFileAtomic: vi.fn(async () => undefined),
+    createDirectory: vi.fn(async () => undefined),
     deleteFile: vi.fn(async () => undefined),
     findRelatedWikiPages: vi.fn(async () => []),
     enqueueBatch: vi.fn(async () => []),
@@ -105,8 +108,11 @@ vi.mock("@/commands/file-sync", () => ({
 vi.mock("@/commands/fs", () => ({
   listDirectory: mocks.listDirectory,
   readFile: mocks.readFile,
+  fileExists: mocks.fileExists,
   getFileSize: mocks.getFileSize,
   writeFile: mocks.writeFile,
+  writeFileAtomic: mocks.writeFileAtomic,
+  createDirectory: mocks.createDirectory,
   deleteFile: mocks.deleteFile,
   findRelatedWikiPages: mocks.findRelatedWikiPages,
 }))
@@ -144,8 +150,11 @@ describe("project file sync", () => {
     })
     mocks.listDirectory.mockImplementation(async (_path?: string) => [])
     mocks.readFile.mockImplementation(async (_path?: string) => "")
+    mocks.fileExists.mockImplementation(async (_path?: string) => false)
     mocks.getFileSize.mockImplementation(async (_path?: string) => 1024)
     mocks.writeFile.mockImplementation(async () => undefined)
+    mocks.writeFileAtomic.mockImplementation(async () => undefined)
+    mocks.createDirectory.mockImplementation(async () => undefined)
     mocks.deleteFile.mockImplementation(async () => undefined)
     mocks.findRelatedWikiPages.mockImplementation(async () => [])
     mocks.enqueueBatch.mockImplementation(async () => [])
@@ -578,13 +587,46 @@ describe("project file sync", () => {
       ],
     })
 
-    await vi.advanceTimersByTimeAsync(250)
+    await vi.advanceTimersByTimeAsync(30_250)
     await vi.waitFor(() => {
       expect(mocks.writeFile).toHaveBeenCalledWith(
         "/tmp/a/wiki/concepts/mind.md",
         expect.stringContaining('sources: ["other.md"]'),
       )
     })
+  })
+
+  it("does not cascade a transient delete when the source exists again", async () => {
+    vi.useFakeTimers()
+    const { startProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+    mocks.fileExists.mockResolvedValue(true)
+
+    void startProjectFileSync(project)
+    await vi.waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2))
+    mocks.emit("file-sync://changed", {
+      projectId: "A",
+      tasks: [{
+        id: "transient-delete",
+        projectId: "A",
+        path: "raw/sources/report.md",
+        kind: "deleted",
+        status: "done",
+        createdAt: 1,
+        updatedAt: 1,
+        retryCount: 0,
+        needsRerun: false,
+      }],
+    })
+
+    await vi.advanceTimersByTimeAsync(30_250)
+    await vi.waitFor(() => {
+      expect(mocks.fileExists).toHaveBeenCalledWith("/tmp/a/raw/sources/report.md")
+    })
+    expect(mocks.cascadeDeleteWikiPagesWithRefs).not.toHaveBeenCalled()
+    expect(mocks.listDirectory).not.toHaveBeenCalledWith("/tmp/a/wiki")
   })
 
   it("cascades delete for wiki pages whose only source was externally deleted", async () => {
@@ -647,7 +689,7 @@ describe("project file sync", () => {
       ],
     })
 
-    await vi.advanceTimersByTimeAsync(250)
+    await vi.advanceTimersByTimeAsync(30_250)
 
     await vi.waitFor(() => {
       expect(mocks.cascadeDeleteWikiPagesWithRefs).toHaveBeenCalledWith(
@@ -724,7 +766,7 @@ describe("project file sync", () => {
       ],
     })
 
-    await vi.advanceTimersByTimeAsync(250)
+    await vi.advanceTimersByTimeAsync(30_250)
 
     await vi.waitFor(() => {
       expect(mocks.cascadeDeleteWikiPagesWithRefs).toHaveBeenCalledTimes(1)

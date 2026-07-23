@@ -4,7 +4,14 @@ import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useResearchStore } from "@/stores/research-store"
-import { getQueue, pauseQueue } from "./ingest-queue"
+import { useWikiStore } from "@/stores/wiki-store"
+import { pauseQueue, restoreQueue } from "./ingest-queue"
+import {
+  pauseQueue as pauseDedupQueue,
+  restoreQueue as restoreDedupQueue,
+} from "./dedup-queue"
+import { startProjectFileSync, stopProjectFileSync } from "./project-file-sync"
+import { startScheduledImport, stopScheduledImport } from "./scheduled-import"
 
 // Dynamic-import mocks: resetProjectState uses `import("@/lib/ingest-queue")`
 // and `import("@/lib/graph-relevance")` at runtime. vi.mock hoists these
@@ -14,8 +21,23 @@ vi.mock("./ingest-queue", async () => {
   return {
     ...actual,
     pauseQueue: vi.fn(async () => {}),
+    restoreQueue: vi.fn(async () => {}),
   }
 })
+vi.mock("./dedup-queue", () => ({
+  pauseQueue: vi.fn(async () => {}),
+  restoreQueue: vi.fn(async () => {}),
+}))
+
+vi.mock("./project-file-sync", () => ({
+  startProjectFileSync: vi.fn(async () => {}),
+  stopProjectFileSync: vi.fn(async () => {}),
+}))
+
+vi.mock("./scheduled-import", () => ({
+  startScheduledImport: vi.fn(),
+  stopScheduledImport: vi.fn(),
+}))
 
 vi.mock("./graph-relevance", () => ({
   clearGraphCache: vi.fn(),
@@ -24,12 +46,32 @@ vi.mock("./graph-relevance", () => ({
 import { clearGraphCache } from "./graph-relevance"
 
 const mockPauseQueue = vi.mocked(pauseQueue)
+const mockRestoreQueue = vi.mocked(restoreQueue)
+const mockPauseDedupQueue = vi.mocked(pauseDedupQueue)
+const mockRestoreDedupQueue = vi.mocked(restoreDedupQueue)
+const mockStartProjectFileSync = vi.mocked(startProjectFileSync)
+const mockStopProjectFileSync = vi.mocked(stopProjectFileSync)
+const mockStartScheduledImport = vi.mocked(startScheduledImport)
+const mockStopScheduledImport = vi.mocked(stopScheduledImport)
 const mockClearGraphCache = vi.mocked(clearGraphCache)
 
 beforeEach(() => {
   mockPauseQueue.mockReset()
   mockPauseQueue.mockImplementation(async () => {})
+  mockRestoreQueue.mockReset()
+  mockRestoreQueue.mockImplementation(async () => {})
+  mockPauseDedupQueue.mockReset()
+  mockPauseDedupQueue.mockImplementation(async () => {})
+  mockRestoreDedupQueue.mockReset()
+  mockRestoreDedupQueue.mockImplementation(async () => {})
+  mockStartProjectFileSync.mockReset()
+  mockStartProjectFileSync.mockImplementation(async () => {})
+  mockStopProjectFileSync.mockReset()
+  mockStopProjectFileSync.mockImplementation(async () => {})
+  mockStartScheduledImport.mockReset()
+  mockStopScheduledImport.mockReset()
   mockClearGraphCache.mockReset()
+  useWikiStore.getState().setProject(null)
 })
 
 describe("resetProjectState — Zustand stores", () => {
@@ -136,16 +178,34 @@ describe("resetProjectState — module-level caches are awaited", () => {
     expect(mockClearGraphCache).toHaveBeenCalledOnce()
   })
 
-  it("does not throw when pauseQueue itself throws — logs and continues", async () => {
-    mockPauseQueue.mockImplementationOnce(async () => {
-      throw new Error("boom")
+  it("rejects and preserves stores when the ingest durability barrier fails", async () => {
+    useChatStore.setState({
+      conversations: [{ id: "keep", title: "keep", createdAt: 0, updatedAt: 0 }],
     })
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    mockPauseQueue.mockImplementationOnce(async () => {
+      throw new Error("disk full")
+    })
 
-    await expect(resetProjectState()).resolves.toBeUndefined()
-    expect(warnSpy).toHaveBeenCalled()
-    expect(mockClearGraphCache).toHaveBeenCalledOnce() // still runs despite sibling failure
-    warnSpy.mockRestore()
+    await expect(resetProjectState()).rejects.toThrow("disk full")
+    expect(useChatStore.getState().conversations[0]?.id).toBe("keep")
+    expect(mockPauseDedupQueue).not.toHaveBeenCalled()
+    expect(mockClearGraphCache).not.toHaveBeenCalled()
+  })
+
+  it("restores a paused ingest queue when the dedup barrier fails", async () => {
+    useWikiStore.getState().setProject({
+      id: "project-id",
+      name: "Project",
+      path: "C:/project",
+    })
+    mockPauseDedupQueue.mockRejectedValueOnce(new Error("dedup disk full"))
+
+    await expect(resetProjectState()).rejects.toThrow("dedup disk full")
+
+    expect(mockRestoreQueue).toHaveBeenCalledWith("project-id", "C:/project")
+    expect(mockRestoreDedupQueue).not.toHaveBeenCalled()
+    expect(mockStopProjectFileSync).toHaveBeenCalledOnce()
+    expect(mockStopScheduledImport).toHaveBeenCalledOnce()
   })
 
   it("does not throw when clearGraphCache itself throws", async () => {
@@ -167,6 +227,3 @@ describe("resetProjectState — leaves unrelated store keys alone", () => {
     expect(useChatStore.getState().maxHistoryMessages).toBe(42)
   })
 })
-
-// Silence the "unused import" warning on getQueue (kept for potential future tests).
-void getQueue

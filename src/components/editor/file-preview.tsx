@@ -22,7 +22,7 @@ import {
 import type { FileCategory } from "@/lib/file-types"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
-import { transformImageEmbeds } from "@/lib/wikilink-transform"
+import { stripHtmlComments, transformImageEmbeds } from "@/lib/wikilink-transform"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { parseFrontmatter } from "@/lib/frontmatter"
@@ -157,7 +157,10 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
   // Rewrite Obsidian image embeds (`![[…]]`) into standard markdown
   // so raw-source previews (e.g. skill-exported docs) actually show
   // their images instead of dumping the embed syntax as text.
-  const renderBody = useMemo(() => transformImageEmbeds(body), [body])
+  const renderBody = useMemo(
+    () => transformImageEmbeds(stripHtmlComments(body)),
+    [body],
+  )
   // Directory of this file (project-absolute) so relative image
   // references (`../assets/x.png`) resolve against the file's own
   // location, Obsidian-style.

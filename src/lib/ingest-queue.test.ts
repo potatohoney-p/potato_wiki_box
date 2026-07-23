@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { flushMicrotasks } from "@/test-helpers/deferred"
+import { flushMicrotasks, waitFor } from "@/test-helpers/deferred"
 
 // Mock autoIngest so tests control success/failure timing.
 vi.mock("./ingest", () => ({
@@ -9,7 +9,7 @@ vi.mock("./ingest", () => ({
 // Mock fs so we don't hit the real filesystem.
 vi.mock("@/commands/fs", () => ({
   readFile: vi.fn(),
-  writeFile: vi.fn(),
+  writeFileAtomic: vi.fn(),
   listDirectory: vi.fn(),
   deleteFile: vi.fn(),
 }))
@@ -65,13 +65,13 @@ import {
   restoreQueue,
 } from "./ingest-queue"
 import { autoIngest } from "./ingest"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile, writeFileAtomic } from "@/commands/fs"
 import { sweepResolvedReviews } from "./sweep-reviews"
 import { useWikiStore } from "@/stores/wiki-store"
 
 const mockAutoIngest = vi.mocked(autoIngest)
 const mockReadFile = vi.mocked(readFile)
-const mockWriteFile = vi.mocked(writeFile)
+const mockWriteFile = vi.mocked(writeFileAtomic)
 const mockSweep = vi.mocked(sweepResolvedReviews)
 
 /** Simulate the app having opened `TEST_ID` at `TEST_PATH` so the queue
@@ -80,6 +80,18 @@ const mockSweep = vi.mocked(sweepResolvedReviews)
  *  projects. */
 async function activateProject(id: string = TEST_ID): Promise<void> {
   await restoreQueue(id, idToPath[id])
+}
+
+function pendingUntilAbort(...args: Parameters<typeof autoIngest>): Promise<string[]> {
+  const signal = args[3]
+  return new Promise((_resolve, reject) => {
+    const abort = () => reject(new DOMException("Aborted", "AbortError"))
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+    signal?.addEventListener("abort", abort, { once: true })
+  })
 }
 
 beforeEach(async () => {
@@ -109,6 +121,15 @@ beforeEach(async () => {
 })
 
 describe("ingest-queue — enqueue & basic processing", () => {
+  it("does not report enqueue success when its durable checkpoint fails", async () => {
+    mockWriteFile.mockRejectedValueOnce(new Error("disk full"))
+
+    await expect(enqueueIngest(TEST_ID, "raw/sources/lost.md")).rejects.toThrow("disk full")
+
+    expect(getQueue()).toHaveLength(0)
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+  })
+
   it("enqueueIngest adds a pending task and triggers processing", async () => {
     mockAutoIngest.mockResolvedValue(["wiki/sources/foo.md"])
 
@@ -133,7 +154,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
     const calls = mockWriteFile.mock.calls
     expect(calls.length).toBeGreaterThan(0)
     const queuePath = calls[0][0]
-    expect(queuePath).toContain(".llm-wiki/ingest-queue.json")
+    expect(queuePath).toContain(".potato-box/ingest-queue.json")
   })
 
   it("enqueueBatch queues multiple tasks and processes them serially", async () => {
@@ -204,7 +225,7 @@ describe("ingest-queue — retry & failure", () => {
     mockAutoIngest.mockRejectedValue(new Error("always fails"))
 
     await enqueueIngest(TEST_ID, "x.md")
-    await flushMicrotasks(20)
+    await waitFor(() => getQueue()[0]?.status === "failed")
     expect(getQueue()[0].status).toBe("failed")
 
     const taskId = getQueue()[0].id
@@ -265,6 +286,32 @@ describe("ingest-queue — retry & failure", () => {
 })
 
 describe("ingest-queue — cancel", () => {
+  it("restores an existing page instead of deleting it on cancellation", async () => {
+    mockAutoIngest.mockImplementation((...args: Parameters<typeof autoIngest>) => {
+      args[5]?.({
+        path: "wiki/concepts/existing.md",
+        previousContent: "# Original content",
+      })
+      return pendingUntilAbort(...args)
+    })
+
+    await enqueueIngest(TEST_ID, "raw/sources/update.md")
+    await waitFor(() => getQueue()[0]?.status === "processing")
+    const taskId = getQueue()[0].id
+    mockWriteFile.mockClear()
+
+    await cancelTask(taskId)
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/project/wiki/concepts/existing.md",
+      "# Original content",
+    )
+    const { deleteFile } = await import("@/commands/fs")
+    expect(vi.mocked(deleteFile)).not.toHaveBeenCalledWith(
+      "/project/wiki/concepts/existing.md",
+    )
+  })
+
   it("cancelTask removes a pending task without calling autoIngest", async () => {
     mockAutoIngest.mockImplementation(() => new Promise(() => {})) // block first task
 
@@ -282,12 +329,44 @@ describe("ingest-queue — cancel", () => {
     expect(getQueue().find((t) => t.sourcePath === "second.md")).toBeUndefined()
     expect(getQueue().find((t) => t.sourcePath === "first.md")).toBeDefined()
   })
+
+  it("does not start the next runner until the aborted runner settles", async () => {
+    const abortGate: { settle?: () => void } = {}
+    mockAutoIngest
+      .mockImplementationOnce((_project, _source, _config, signal) =>
+        new Promise<string[]>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            abortGate.settle = () => reject(new DOMException("Aborted", "AbortError"))
+          })
+        }),
+      )
+      .mockResolvedValueOnce(["wiki/sources/second.md"])
+
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "first.md", folderContext: "" },
+      { sourcePath: "second.md", folderContext: "" },
+    ])
+    await flushMicrotasks(3)
+    const first = getQueue().find((task) => task.sourcePath === "first.md")!
+    const cancelPromise = cancelTask(first.id)
+    await flushMicrotasks(3)
+
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+    expect(getQueue().find((task) => task.sourcePath === "second.md")?.status).toBe("pending")
+
+    if (!abortGate.settle) throw new Error("abort listener did not run")
+    abortGate.settle()
+    await cancelPromise
+    await flushMicrotasks(20)
+
+    expect(mockAutoIngest).toHaveBeenCalledTimes(2)
+    expect(getQueue()).toHaveLength(0)
+  })
 })
 
 describe("ingest-queue — cancelAllTasks", () => {
   it("drops all pending and processing tasks but keeps failed ones", async () => {
-    // Block the processing task so it doesn't finish on its own.
-    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    mockAutoIngest.mockImplementation(pendingUntilAbort)
 
     await enqueueBatch(TEST_ID, [
       { sourcePath: "a.md", folderContext: "" },
@@ -315,7 +394,7 @@ describe("ingest-queue — cancelAllTasks", () => {
   })
 
   it("is safe to call after it has already cleared the queue", async () => {
-    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    mockAutoIngest.mockImplementation(pendingUntilAbort)
     await enqueueIngest(TEST_ID, "only.md")
     await flushMicrotasks(2)
 
@@ -329,7 +408,7 @@ describe("ingest-queue — clearCompletedTasks & summary", () => {
   it("getQueueSummary returns accurate counts", async () => {
     mockAutoIngest.mockRejectedValue(new Error("fail"))
     await enqueueIngest(TEST_ID, "fail.md")
-    await flushMicrotasks(20)
+    await waitFor(() => getQueue()[0]?.status === "failed")
 
     const summary = getQueueSummary()
     expect(summary.failed).toBe(1)
@@ -357,7 +436,7 @@ describe("ingest-queue — clearCompletedTasks & summary", () => {
   it("clearCompletedTasks drops failed tasks", async () => {
     mockAutoIngest.mockRejectedValue(new Error("fail"))
     await enqueueIngest(TEST_ID, "f.md")
-    await flushMicrotasks(20)
+    await waitFor(() => getQueue()[0]?.status === "failed")
 
     expect(getQueue()).toHaveLength(1)
     await clearCompletedTasks()
@@ -370,7 +449,7 @@ describe("ingest-queue — queue-drain triggers review sweep", () => {
     mockAutoIngest.mockResolvedValue(["wiki/sources/foo.md"])
 
     await enqueueIngest(TEST_ID, "ok.md")
-    await flushMicrotasks(30)
+    await waitFor(() => mockSweep.mock.calls.length === 1)
 
     expect(mockSweep).toHaveBeenCalledOnce()
     expect(mockSweep).toHaveBeenCalledWith("/project", expect.any(AbortSignal))
@@ -381,7 +460,7 @@ describe("ingest-queue — queue-drain triggers review sweep", () => {
     // (We simulate an idle condition by enqueueing, processing, draining once)
     mockAutoIngest.mockResolvedValue(["wiki/sources/foo.md"])
     await enqueueIngest(TEST_ID, "a.md")
-    await flushMicrotasks(20)
+    await waitFor(() => mockSweep.mock.calls.length === 1)
     expect(mockSweep).toHaveBeenCalledTimes(1)
 
     // Now the queue is empty. Calling cancelTask on a nonexistent id is a
@@ -519,7 +598,7 @@ import { pauseQueue } from "./ingest-queue"
 
 describe("ingest-queue — pauseQueue & switch-project survival", () => {
   it("pauseQueue persists pending/processing tasks to the paused project's disk", async () => {
-    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    mockAutoIngest.mockImplementation(pendingUntilAbort)
     await enqueueBatch(TEST_ID, [
       { sourcePath: "a.md", folderContext: "" },
       { sourcePath: "b.md", folderContext: "" },
@@ -534,14 +613,27 @@ describe("ingest-queue — pauseQueue & switch-project survival", () => {
     const writes = mockWriteFile.mock.calls
     expect(writes.length).toBeGreaterThan(0)
     const [pathArg, contentArg] = writes[writes.length - 1]
-    expect(String(pathArg)).toContain("/project/.llm-wiki/ingest-queue.json")
+    expect(String(pathArg)).toContain("/project/.potato-box/ingest-queue.json")
     const persisted = JSON.parse(String(contentArg)) as Array<{ status: string }>
     expect(persisted).toHaveLength(2)
     for (const t of persisted) expect(t.status).toBe("pending")
   })
 
+  it("keeps the active in-memory queue when the durability barrier fails", async () => {
+    mockAutoIngest.mockImplementation(pendingUntilAbort)
+    await enqueueIngest(TEST_ID, "keep-me.md")
+    await flushMicrotasks(2)
+    mockWriteFile.mockRejectedValueOnce(new Error("disk full"))
+
+    await expect(pauseQueue()).rejects.toThrow("disk full")
+
+    expect(getQueue()).toHaveLength(1)
+    expect(getQueue()[0].sourcePath).toBe("keep-me.md")
+    expect(["pending", "processing"]).toContain(getQueue()[0].status)
+  })
+
   it("pauseQueue then restoreQueue of SAME project brings tasks back", async () => {
-    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    mockAutoIngest.mockImplementation(pendingUntilAbort)
     await enqueueIngest(TEST_ID, "first.md")
     await flushMicrotasks(2)
 
@@ -562,11 +654,16 @@ describe("ingest-queue — pauseQueue & switch-project survival", () => {
   })
 
   it("processNext bails if currentProjectId changes mid-ingest (no cross-project writes)", async () => {
-    // Block autoIngest so we can pause mid-flight. Then resolve it
-    // AFTER pauseQueue completes to simulate the delayed return.
-    let resolveAutoIngest: (files: string[]) => void = () => {}
-    mockAutoIngest.mockImplementation(
-      () => new Promise<string[]>((resolve) => { resolveAutoIngest = resolve }),
+    // Resolve only when aborted. pauseQueue must wait for this stale
+    // completion before project B can restore.
+    mockAutoIngest.mockImplementation((...args: Parameters<typeof autoIngest>) =>
+      new Promise<string[]>((resolve) => {
+        args[3]?.addEventListener(
+          "abort",
+          () => resolve(["wiki/sources/foo.md"]),
+          { once: true },
+        )
+      }),
     )
 
     await enqueueIngest(TEST_ID, "long-running.md")
@@ -579,8 +676,6 @@ describe("ingest-queue — pauseQueue & switch-project survival", () => {
     await pauseQueue()
     await restoreQueue(TEST_ID_B, TEST_PATH_B)
 
-    // Now the orphaned autoIngest for TEST_ID returns late.
-    resolveAutoIngest(["wiki/sources/foo.md"])
     await flushMicrotasks(10)
 
     // The orphan must not have written to the ACTIVE (B) project's file.
@@ -619,10 +714,10 @@ describe("cleanupWrittenFiles — embedding cascade", () => {
     expect(mockDeleteFile).toHaveBeenNthCalledWith(1, "/proj/wiki/concepts/rope.md")
     expect(mockDeleteFile).toHaveBeenNthCalledWith(2, "/proj/wiki/entities/transformer.md")
 
-    // Embedding cascade uses page slugs (basename minus .md).
+    // Embedding cascade uses collision-safe wiki-relative page IDs.
     expect(removePageEmbeddingMock).toHaveBeenCalledTimes(2)
-    expect(removePageEmbeddingMock).toHaveBeenNthCalledWith(1, "/proj", "rope")
-    expect(removePageEmbeddingMock).toHaveBeenNthCalledWith(2, "/proj", "transformer")
+    expect(removePageEmbeddingMock).toHaveBeenNthCalledWith(1, "/proj", "concepts%2Frope")
+    expect(removePageEmbeddingMock).toHaveBeenNthCalledWith(2, "/proj", "entities%2Ftransformer")
   })
 
   it("uses absolute paths verbatim (doesn't double-prefix the project path)", async () => {
@@ -657,7 +752,7 @@ describe("cleanupWrittenFiles — embedding cascade", () => {
     // First file's embedding cascade was skipped (deleteFile threw),
     // second file's cascade still ran.
     expect(removePageEmbeddingMock).toHaveBeenCalledTimes(1)
-    expect(removePageEmbeddingMock).toHaveBeenCalledWith("/proj", "present")
+    expect(removePageEmbeddingMock).toHaveBeenCalledWith("/proj", "concepts%2Fpresent")
   })
 
   it("swallows removePageEmbedding errors so a LanceDB issue doesn't abort cleanup", async () => {
@@ -693,6 +788,6 @@ describe("cleanupWrittenFiles — embedding cascade", () => {
     // pull "rope" out cleanly so the cascade hits the right page.
     await cleanupWrittenFiles("C:/proj", ["wiki\\concepts\\rope.md"])
 
-    expect(removePageEmbeddingMock).toHaveBeenCalledWith("C:/proj", "rope")
+    expect(removePageEmbeddingMock).toHaveBeenCalledWith("C:/proj", "concepts%2Frope")
   })
 })

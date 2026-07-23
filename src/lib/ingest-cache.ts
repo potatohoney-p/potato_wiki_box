@@ -1,19 +1,21 @@
-import { readFile, writeFile, fileExists } from "@/commands/fs"
+import { readFile, writeFileAtomic, fileExists } from "@/commands/fs"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
 
 /**
  * SHA256-based ingest cache.
  * Stores hash of source file content → skips re-ingest if unchanged.
- * Cache file: .llm-wiki/ingest-cache.json
+ * Cache file: .potato-box/ingest-cache.json
  */
 
 interface CacheEntry {
   hash: string
   timestamp: number
   filesWritten: string[]
+  complete: true
 }
 
 interface CacheData {
+  version: 2
   entries: Record<string, CacheEntry> // keyed by source filename
 }
 
@@ -26,21 +28,25 @@ async function sha256(content: string): Promise<string> {
 }
 
 function cachePath(projectPath: string): string {
-  return `${normalizePath(projectPath)}/.llm-wiki/ingest-cache.json`
+  return `${normalizePath(projectPath)}/.potato-box/ingest-cache.json`
 }
 
 async function loadCache(projectPath: string): Promise<CacheData> {
   try {
     const raw = await readFile(cachePath(projectPath))
-    return JSON.parse(raw) as CacheData
+    const parsed = JSON.parse(raw) as Partial<CacheData>
+    if (parsed.version !== 2 || !parsed.entries || typeof parsed.entries !== "object") {
+      return { version: 2, entries: {} }
+    }
+    return parsed as CacheData
   } catch {
-    return { entries: {} }
+    return { version: 2, entries: {} }
   }
 }
 
 async function saveCache(projectPath: string, cache: CacheData): Promise<void> {
   try {
-    await writeFile(cachePath(projectPath), JSON.stringify(cache, null, 2))
+    await writeFileAtomic(cachePath(projectPath), JSON.stringify(cache, null, 2))
   } catch {
     // non-critical
   }
@@ -65,7 +71,7 @@ export async function checkIngestCache(
 ): Promise<string[] | null> {
   const cache = await loadCache(projectPath)
   const entry = cache.entries[sourceFileName]
-  if (!entry) return null
+  if (!entry || entry.complete !== true || !Array.isArray(entry.filesWritten) || entry.filesWritten.length === 0) return null
 
   const currentHash = await sha256(sourceContent)
   if (entry.hash !== currentHash) return null
@@ -101,6 +107,9 @@ export async function saveIngestCache(
   sourceContent: string,
   filesWritten: string[],
 ): Promise<void> {
+  if (filesWritten.length === 0) {
+    throw new Error("Cannot cache an ingest result with no output files")
+  }
   const cache = await loadCache(projectPath)
   const hash = await sha256(sourceContent)
   const newEntries = { ...cache.entries }
@@ -108,8 +117,9 @@ export async function saveIngestCache(
     hash,
     timestamp: Date.now(),
     filesWritten,
+    complete: true,
   }
-  await saveCache(projectPath, { entries: newEntries })
+  await saveCache(projectPath, { version: 2, entries: newEntries })
 }
 
 /**
@@ -122,5 +132,5 @@ export async function removeFromIngestCache(
   const cache = await loadCache(projectPath)
   const newEntries = { ...cache.entries }
   delete newEntries[sourceFileName]
-  await saveCache(projectPath, { entries: newEntries })
+  await saveCache(projectPath, { version: 2, entries: newEntries })
 }

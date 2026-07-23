@@ -1,5 +1,6 @@
 import { loadTheme } from "@/lib/project-store"
 import { getCurrentWindow, type Theme as NativeTheme } from "@tauri-apps/api/window"
+import { isTauriRuntime } from "@/lib/tauri-runtime"
 
 export type AppTheme = "light" | "dark" | "system"
 
@@ -9,10 +10,6 @@ let mediaListenerInstalled = false
 
 function systemPrefersDark(): boolean {
   return window.matchMedia("(prefers-color-scheme: dark)").matches
-}
-
-function isTauriRuntime(): boolean {
-  return "__TAURI_INTERNALS__" in window || "__TAURI__" in window
 }
 
 function syncNativeWindowTheme(resolved: NativeTheme): void {

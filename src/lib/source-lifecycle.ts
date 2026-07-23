@@ -8,6 +8,7 @@ import {
   preprocessFile,
   readFile,
   writeFile,
+  writeFileAtomic,
 } from "@/commands/fs"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import type { LlmConfig } from "@/stores/wiki-store"
@@ -34,6 +35,7 @@ import {
 } from "@/lib/wiki-cleanup"
 import { collectAllFilesIncludingDot } from "@/lib/sources-tree-delete"
 import { isPathAllowedBySourceWatch, normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { vectorPageIdFromPath } from "@/lib/wiki-page-id"
 import type { SourceWatchConfig } from "@/stores/wiki-store"
 
 export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
@@ -137,7 +139,9 @@ export async function enqueueSourceIngest(
   llmConfig: LlmConfig,
   options: { sourceRoot?: string; rootContext?: string } = {},
 ): Promise<string[]> {
-  if (!hasUsableLlm(llmConfig)) return []
+  if (!hasUsableLlm(llmConfig)) {
+    throw new Error("No usable LLM provider is configured. Configure one in Settings before ingesting sources.")
+  }
   const files = sourcePaths
     .filter(isIngestableSourcePath)
     .map((sourcePath) => ({
@@ -147,7 +151,9 @@ export async function enqueueSourceIngest(
         options.rootContext,
       ),
     }))
-  if (files.length === 0) return []
+  if (files.length === 0) {
+    throw new Error("No supported source files were selected for ingest.")
+  }
   return enqueueBatch(project.id, files)
 }
 
@@ -157,6 +163,9 @@ export async function importSourceFiles(
   llmConfig: LlmConfig,
   sourceWatchConfig?: SourceWatchConfig,
 ): Promise<string[]> {
+  if (!hasUsableLlm(llmConfig)) {
+    throw new Error("Configure an LLM provider in Settings before importing sources.")
+  }
   const pp = normalizePath(project.path)
   const importedPaths: string[] = []
   const cfg = normalizeSourceWatchConfig(sourceWatchConfig)
@@ -195,13 +204,17 @@ export async function importSourceFolder(
   llmConfig: LlmConfig,
   sourceWatchConfig?: SourceWatchConfig,
 ): Promise<string[]> {
+  if (!hasUsableLlm(llmConfig)) {
+    throw new Error("Configure an LLM provider in Settings before importing sources.")
+  }
   const pp = normalizePath(project.path)
   const sourceRoot = normalizePath(selectedFolder)
   if (isProjectScopedImport(pp, sourceRoot)) {
     throw new Error("Cannot import the project folder or a folder inside the current project.")
   }
   const folderName = getFileName(selectedFolder) || "imported"
-  const destDir = `${pp}/raw/sources/${folderName}`
+  const destDir = await getUniqueDestDirectory(`${pp}/raw/sources`, folderName)
+  const destinationFolderName = getFileName(destDir)
   const cfg = normalizeSourceWatchConfig(sourceWatchConfig)
   const maxBytes = cfg.maxFileSizeMb * 1024 * 1024
   const allowedFiles: string[] = []
@@ -210,7 +223,7 @@ export async function importSourceFolder(
   for (const file of sourceFiles) {
     const relativeSourcePath = getRelativePath(file.path, sourceRoot)
     const destPath = `${destDir}/${relativeSourcePath}`
-    const relPath = `raw/sources/${folderName}/${relativeSourcePath}`
+    const relPath = `raw/sources/${destinationFolderName}/${relativeSourcePath}`
     let allowed = isPathAllowedBySourceWatch(relPath, cfg)
     if (allowed) {
       try {
@@ -227,12 +240,10 @@ export async function importSourceFolder(
     preprocessFile(destPath).catch(() => {})
   }
 
-  if (hasUsableLlm(llmConfig)) {
-    await enqueueSourceIngest(project, allowedFiles, llmConfig, {
-      sourceRoot: destDir,
-      rootContext: folderName,
-    })
-  }
+  await enqueueSourceIngest(project, allowedFiles, llmConfig, {
+    sourceRoot: destDir,
+    rootContext: destinationFolderName,
+  })
 
   return allowedFiles
 }
@@ -343,6 +354,7 @@ export async function deleteSourceFiles(
 
   let deletedWikiPaths: string[] = []
   if (pagesToDelete.length > 0) {
+    await archiveWikiPagesForRecovery(pp, pagesToDelete)
     const { cascadeDeleteWikiPagesWithRefs } = await import("@/lib/wiki-page-delete")
     const result = await cascadeDeleteWikiPagesWithRefs(pp, pagesToDelete)
     deletedWikiPaths = result.deletedPaths
@@ -361,6 +373,26 @@ export async function deleteSourceFiles(
   }
 
   return { deletedWikiPaths, rewrittenSourcePages, skippedPages }
+}
+
+async function archiveWikiPagesForRecovery(
+  projectPath: string,
+  pagePaths: string[],
+): Promise<void> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  for (const pagePath of pagePaths) {
+    try {
+      const content = await readFile(pagePath)
+      const relative = getRelativePath(normalizePath(pagePath), projectPath)
+      const recoveryPath = `${projectPath}/.potato-box/trash/${stamp}/${relative}`
+      await createDirectory(recoveryPath.slice(0, recoveryPath.lastIndexOf("/")))
+      await writeFileAtomic(recoveryPath, content)
+    } catch (error) {
+      // Do not perform an irreversible delete unless its recovery snapshot is
+      // durable. The caller surfaces this failure and leaves the page intact.
+      throw new Error(`Failed to archive ${pagePath} before deletion: ${String(error)}`)
+    }
+  }
 }
 
 export async function deleteSourceFolder(
@@ -395,13 +427,13 @@ export async function cleanupDeletedWikiPages(
 ): Promise<void> {
   const pp = normalizePath(projectPath)
   const deletedInfos = relativePaths
-    .map((path) => ({ slug: getFileStem(path), title: "" }))
+    .map((path) => ({ slug: getFileStem(path), title: "", path: normalizePath(path) }))
     .filter((info) => info.slug.length > 0 && !info.slug.startsWith("."))
 
   if (deletedInfos.length === 0) return
 
   for (const info of deletedInfos) {
-    await removePageEmbedding(pp, info.slug)
+    await removePageEmbedding(pp, vectorPageIdFromPath(info.path, "wiki"))
     try {
       await deleteFile(`${pp}/wiki/media/${info.slug}`)
     } catch {
@@ -469,6 +501,21 @@ async function getUniqueDestPath(dir: string, fileName: string): Promise<string>
   }
 
   return `${dir}/${nameWithoutExt}-${date}-${Date.now()}${ext}`
+}
+
+async function getUniqueDestDirectory(dir: string, folderName: string): Promise<string> {
+  const basePath = `${dir}/${folderName}`
+  if (!(await fileExists(basePath))) return basePath
+
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
+  const datedPath = `${dir}/${folderName}-${date}`
+  if (!(await fileExists(datedPath))) return datedPath
+
+  for (let i = 2; i <= 99; i++) {
+    const candidate = `${datedPath}-${i}`
+    if (!(await fileExists(candidate))) return candidate
+  }
+  return `${datedPath}-${Date.now()}`
 }
 
 async function appendSourceDeleteLog(

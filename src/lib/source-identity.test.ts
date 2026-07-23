@@ -35,6 +35,26 @@ describe("source identity helpers", () => {
     )
   })
 
+  it("preserves wiki paths for re-ingested pages to avoid basename collisions", () => {
+    const rawIdentity = sourceIdentityForPath(
+      "C:/Users/Me/Wiki",
+      "C:/Users/Me/Wiki/raw/sources/model-gateway.md",
+    )
+    const savedQueryIdentity = sourceIdentityForPath(
+      "C:/Users/Me/Wiki",
+      "c:/users/me/wiki/wiki/queries/model-gateway.md",
+    )
+
+    expect(rawIdentity).toBe("model-gateway.md")
+    expect(savedQueryIdentity).toBe("wiki/queries/model-gateway.md")
+    expect(sourceSummarySlugFromIdentity(savedQueryIdentity)).toMatch(
+      /^4-wiki--7-queries--13-model-gateway--[a-z0-9]+$/,
+    )
+    expect(sourceSummarySlugFromIdentity(savedQueryIdentity)).not.toBe(
+      sourceSummarySlugFromIdentity(rawIdentity),
+    )
+  })
+
   it("keeps legacy basename slugs for root-level sources", () => {
     expect(sourceSummarySlugFromIdentity("config.yaml")).toBe("config")
   })

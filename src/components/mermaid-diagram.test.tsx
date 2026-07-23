@@ -1,6 +1,15 @@
 import { createElement, isValidElement } from "react"
 import { describe, expect, it } from "vitest"
-import { MermaidDiagram, unwrapMermaidPre } from "./mermaid-diagram"
+import { MERMAID_CONFIG, MermaidDiagram, unwrapMermaidPre } from "./mermaid-diagram"
+
+describe("Mermaid security configuration", () => {
+  it("renders only on demand with Mermaid strict mode", () => {
+    expect(MERMAID_CONFIG).toMatchObject({
+      startOnLoad: false,
+      securityLevel: "strict",
+    })
+  })
+})
 
 describe("unwrapMermaidPre", () => {
   it("returns a MermaidDiagram element so markdown renderers can avoid nesting it in pre", () => {

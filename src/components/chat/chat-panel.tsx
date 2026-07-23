@@ -12,12 +12,14 @@ import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, readFile, deleteFile } from "@/commands/fs"
 import { searchWiki } from "@/lib/search"
 import { buildRetrievalGraph, getRelatedNodes } from "@/lib/graph-relevance"
-import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
+import { wikiPageIdFromPath } from "@/lib/wiki-page-id"
+import { normalizePath, getRelativePath } from "@/lib/path-utils"
 import { buildLanguageDirective, buildLanguageReminder } from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
 import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "@/lib/anytxt-search"
 import { resolveSearchConfig, webSearch, type WebSearchResult } from "@/lib/web-search"
+import { chatConversationFilePath } from "@/lib/persist"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
@@ -110,7 +112,11 @@ function ConversationSidebar() {
                         // Delete persisted chat file
                         const proj = useWikiStore.getState().project
                         if (proj) {
-                          deleteFile(`${proj.path}/.llm-wiki/chats/${conv.id}.json`).catch(() => {})
+                          try {
+                            deleteFile(chatConversationFilePath(proj.path, conv.id)).catch(() => {})
+                          } catch (err) {
+                            console.error("Rejected unsafe conversation id:", err)
+                          }
                         }
                       }}
                     >
@@ -142,6 +148,7 @@ export function ChatPanel() {
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const streamingContent = useChatStore((s) => s.streamingContent)
+  const streamingConversationId = useChatStore((s) => s.streamingConversationId)
   const mode = useChatStore((s) => s.mode)
   const addMessage = useChatStore((s) => s.addMessage)
   const setStreaming = useChatStore((s) => s.setStreaming)
@@ -165,6 +172,7 @@ export function ChatPanel() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
 
   const abortRef = useRef<AbortController | null>(null)
+  const activeSendRef = useRef<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -182,14 +190,27 @@ export function ChatPanel() {
       images: MessageImage[] = [],
       options: ChatSendOptions = { useWebSearch: false, useAnyTxtSearch: false },
     ) => {
+      // Claim the send synchronously. Retrieval has several awaits before the
+      // provider stream starts, so relying on rendered `isStreaming` alone
+      // leaves a same-tick double-submit window.
+      if (activeSendRef.current) return
+      const sendId = crypto.randomUUID()
+      activeSendRef.current = sendId
+      const controller = new AbortController()
+      abortRef.current = controller
+
       // Auto-create a conversation if none is active
       let convId = useChatStore.getState().activeConversationId
       if (!convId) {
         convId = createConversation()
       }
 
-      addMessage("user", text, images)
-      setStreaming(true)
+      addMessage("user", text, images, convId)
+      setStreaming(true, convId)
+      let accumulated = ""
+      let settled = false
+
+      try {
 
       // Build system prompt with wiki context using graph-enhanced retrieval
       const systemMessages: LLMMessage[] = []
@@ -310,8 +331,7 @@ export function ChatPanel() {
         const graphExpansions: { title: string; path: string; relevance: number }[] = []
 
         for (const result of topSearchResults) {
-          const fileName = getFileName(result.path)
-          const nodeId = fileName.replace(/\.md$/, "")
+          const nodeId = wikiPageIdFromPath(result.path, `${pp}/wiki`)
           const related = getRelatedNodes(nodeId, graph, 3)
           for (const { node, relevance } of related) {
             if (relevance < 2.0) continue
@@ -423,7 +443,8 @@ export function ChatPanel() {
 
       // ── Conversation history with count limit ────────────────
       // Only include messages from the active conversation, last N messages
-      const activeConvMessages = useChatStore.getState().getActiveMessages()
+      const activeConvMessages = useChatStore.getState().messages
+        .filter((message) => message.conversationId === convId)
         .filter((m) => m.role === "user" || m.role === "assistant")
         .slice(-maxHistoryMessages)
 
@@ -470,10 +491,10 @@ export function ChatPanel() {
         }
       }
 
-      const controller = new AbortController()
-      abortRef.current = controller
+      if (controller.signal.aborted) {
+        throw new DOMException("Request aborted", "AbortError")
+      }
 
-      let accumulated = ""
       let thinkingOpen = false
 
       const appendReasoning = (token: string) => {
@@ -481,17 +502,17 @@ export function ChatPanel() {
         if (!thinkingOpen) {
           thinkingOpen = true
           accumulated += "<think>"
-          appendStreamToken("<think>")
+          appendStreamToken("<think>", convId)
         }
         accumulated += token
-        appendStreamToken(token)
+        appendStreamToken(token, convId)
       }
 
       const closeReasoning = () => {
         if (!thinkingOpen) return
         thinkingOpen = false
         accumulated += "</think>"
-        appendStreamToken("</think>")
+        appendStreamToken("</think>", convId)
       }
 
       await streamChat(
@@ -501,29 +522,65 @@ export function ChatPanel() {
           onToken: (token) => {
             closeReasoning()
             accumulated += token
-            appendStreamToken(token)
+            appendStreamToken(token, convId)
           },
           onReasoningToken: appendReasoning,
           onDone: () => {
+            if (settled) return
+            settled = true
             closeReasoning()
-            finalizeStream(accumulated, queryRefs)
-            abortRef.current = null
+            finalizeStream(accumulated, queryRefs, convId)
             // save-worthy detection removed — user has direct "Save to Wiki" button on each message
           },
           onError: (err) => {
-            finalizeStream(`Error: ${err.message}`, undefined)
-            abortRef.current = null
+            if (settled) return
+            settled = true
+            finalizeStream(`Error: ${err.message}`, undefined, convId)
           },
         },
         controller.signal,
       )
+      // Some transports resolve without firing onDone. Treat resolution as
+      // completion so the UI cannot remain permanently stuck in streaming.
+      if (!settled) {
+        settled = true
+        closeReasoning()
+        finalizeStream(accumulated, queryRefs, convId)
+      }
+      } catch (error) {
+        if (!settled) {
+          settled = true
+          if (controller.signal.aborted) {
+            setStreaming(false, convId)
+          } else {
+            const message = error instanceof Error ? error.message : String(error)
+            finalizeStream(`Error: ${message}`, undefined, convId)
+          }
+        }
+      } finally {
+        if (abortRef.current === controller) abortRef.current = null
+        if (activeSendRef.current === sendId) activeSendRef.current = null
+        const state = useChatStore.getState()
+        if (state.streamingConversationId === convId && !state.streamingContent) {
+          setStreaming(false, convId)
+        }
+      }
     },
     [llmConfig, searchApiConfig, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
   )
 
   const handleStop = useCallback(() => {
+    const state = useChatStore.getState()
+    const streamId = state.streamingConversationId
+    const partial = state.streamingContent.trim()
     abortRef.current?.abort()
     abortRef.current = null
+    if (!streamId) return
+    if (partial) {
+      state.finalizeStream(`${partial}\n\n_Response stopped._`, undefined, streamId)
+    } else {
+      state.setStreaming(false, streamId)
+    }
   }, [])
 
   const handleRegenerate = useCallback(async () => {
@@ -605,7 +662,9 @@ export function ChatPanel() {
                     />
                   )
                 })}
-                {isStreaming && <StreamingMessage content={streamingContent} />}
+                {isStreaming && streamingConversationId === activeConversationId && (
+                  <StreamingMessage content={streamingContent} />
+                )}
                 <div ref={bottomRef} />
               </div>
             </div>

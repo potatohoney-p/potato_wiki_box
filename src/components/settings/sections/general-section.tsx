@@ -55,7 +55,7 @@ export function GeneralSection({ draft, setDraft }: Props) {
           </span>
           <p className="text-xs text-muted-foreground">
             {t("settings.sections.general.autostartHint", {
-              defaultValue: "Starts LLM Wiki automatically after you sign in to this computer.",
+              defaultValue: "Starts potato box automatically after you sign in to this computer.",
             })}
           </p>
         </div>

@@ -431,7 +431,7 @@ afterEach(async () => {
         "tests",
         "fixtures",
         "real-output",
-        name.replace(/^llmwiki-real-llm-/, ""),
+        name.replace(/^potato-box-real-llm-/, ""),
       )
       await fs.rm(keep, { recursive: true, force: true })
       await fs.mkdir(path.dirname(keep), { recursive: true })

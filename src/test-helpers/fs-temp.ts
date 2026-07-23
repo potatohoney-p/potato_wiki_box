@@ -12,7 +12,24 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { randomUUID } from "node:crypto"
 import type { FileNode } from "@/types/wiki"
+
+async function writeTextFile(p: string, contents: string): Promise<void> {
+  await fs.mkdir(path.dirname(p), { recursive: true })
+  await fs.writeFile(p, contents, "utf-8")
+}
+
+async function writeTextFileAtomic(p: string, contents: string): Promise<void> {
+  const temporaryPath = path.join(path.dirname(p), `.${path.basename(p)}.${randomUUID()}.tmp`)
+  await writeTextFile(temporaryPath, contents)
+  try {
+    await fs.rename(temporaryPath, p)
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {})
+    throw error
+  }
+}
 
 async function buildTree(dir: string): Promise<FileNode[]> {
   let entries
@@ -52,10 +69,13 @@ export const realFs = {
   readFile: async (p: string): Promise<string> => {
     return fs.readFile(p, "utf-8")
   },
-  writeFile: async (p: string, contents: string): Promise<void> => {
-    await fs.mkdir(path.dirname(p), { recursive: true })
-    await fs.writeFile(p, contents, "utf-8")
+  readTextFileLimited: async (p: string, maxBytes: number): Promise<string> => {
+    const metadata = await fs.stat(p)
+    if (metadata.size > maxBytes) throw new Error("text file exceeds limit")
+    return fs.readFile(p, "utf-8")
   },
+  writeFile: writeTextFile,
+  writeFileAtomic: writeTextFileAtomic,
   listDirectory: async (p: string): Promise<FileNode[]> => {
     return buildTree(p)
   },
@@ -98,7 +118,7 @@ export async function createTempProject(label: string = "proj"): Promise<{
   path: string
   cleanup: () => Promise<void>
 }> {
-  const prefix = path.join(os.tmpdir(), `llmwiki-${label}-`)
+  const prefix = path.join(os.tmpdir(), `potato-box-${label}-`)
   const dir = await fs.mkdtemp(prefix)
   const normalized = dir.replace(/\\/g, "/")
   return {

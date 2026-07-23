@@ -1,6 +1,7 @@
 import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { buildRetrievalGraph, calculateRelevance } from "./graph-relevance"
+import { resolveWikiPageId, wikiPageIdFromPath } from "./wiki-page-id"
 import { normalizePath } from "@/lib/path-utils"
 import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
@@ -13,7 +14,6 @@ export interface GraphNode {
   linkCount: number // inbound + outbound
   community: number // community id from Louvain detection
 }
-
 export interface GraphEdge {
   source: string
   target: string
@@ -152,10 +152,6 @@ function extractWikilinks(content: string): string[] {
   return links
 }
 
-function fileNameToId(fileName: string): string {
-  return fileName.replace(/\.md$/, "")
-}
-
 export async function buildWikiGraph(
   projectPath: string,
 ): Promise<{ nodes: GraphNode[]; edges: GraphEdge[]; communities: CommunityInfo[] }> {
@@ -180,7 +176,7 @@ export async function buildWikiGraph(
   >()
 
   for (const file of mdFiles) {
-    const id = fileNameToId(file.name)
+    const id = wikiPageIdFromPath(file.path, wikiRoot)
     let content = ""
     try {
       content = await readFile(file.path)
@@ -219,7 +215,7 @@ export async function buildWikiGraph(
   for (const [sourceId, nodeData] of nodeMap) {
     for (const targetRaw of nodeData.links) {
       // Normalize target: try matching by id (case-insensitive, hyphen/space)
-      const targetId = resolveTarget(targetRaw, nodeMap)
+      const targetId = resolveWikiPageId(targetRaw, nodeMap.keys())
       if (targetId === null) continue
       if (targetId === sourceId) continue
 
@@ -283,22 +279,4 @@ export async function buildWikiGraph(
   }))
 
   return { nodes, edges, communities }
-}
-
-function resolveTarget(
-  raw: string,
-  nodeMap: Map<string, { id: string }>,
-): string | null {
-  // Direct match
-  if (nodeMap.has(raw)) return raw
-
-  // Normalize: lowercase, replace spaces with hyphens and vice versa
-  const normalized = raw.toLowerCase().replace(/\s+/g, "-")
-  for (const id of nodeMap.keys()) {
-    if (id.toLowerCase() === normalized) return id
-    if (id.toLowerCase() === raw.toLowerCase()) return id
-    if (id.toLowerCase().replace(/\s+/g, "-") === normalized) return id
-  }
-
-  return null
 }

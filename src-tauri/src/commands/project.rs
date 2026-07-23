@@ -2,15 +2,20 @@ use std::fs;
 use std::path::Path;
 
 use chrono::Local;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::migration::{migrate_project_state, PROJECT_STATE_DIR};
 use crate::panic_guard::run_guarded;
 use crate::types::wiki::WikiProject;
 
 #[tauri::command]
-pub fn create_project(name: String, path: String) -> Result<WikiProject, String> {
-    run_guarded("create_project", || create_project_impl(name, path))
+pub fn create_project(app: AppHandle, name: String, path: String) -> Result<WikiProject, String> {
+    run_guarded("create_project", || {
+        let mut project = create_project_impl(name, path)?;
+        project.path = allow_project_assets(&app, Path::new(&project.path))?;
+        Ok(project)
+    })
 }
 
 fn create_project_impl(name: String, path: String) -> Result<WikiProject, String> {
@@ -30,6 +35,7 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
         "wiki/queries",
         "wiki/comparisons",
         "wiki/synthesis",
+        PROJECT_STATE_DIR,
     ];
     for dir in &dirs {
         fs::create_dir_all(root.join(dir))
@@ -39,8 +45,7 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
     let today = Local::now().format("%Y-%m-%d").to_string();
 
     // schema.md
-    let schema_content = format!(
-        r#"# Wiki Schema
+    let schema_content = r#"# Wiki Schema
 
 ## Page Types
 
@@ -115,7 +120,7 @@ When sources contradict each other:
 3. Link both sources from the query page
 4. Resolve in a synthesis page once sufficient evidence exists
 "#
-    );
+    .to_string();
     write_file_inner(root.join("schema.md"), &schema_content)?;
 
     // purpose.md
@@ -202,6 +207,7 @@ related: []
   "attachmentFolderPath": "raw/assets",
   "userIgnoreFilters": [
     ".cache",
+    ".potato-box",
     ".llm-wiki",
     ".superpowers"
   ],
@@ -242,14 +248,19 @@ related: []
 }
 
 #[tauri::command]
-pub fn open_project(path: String) -> Result<WikiProject, String> {
+pub fn open_project(app: AppHandle, path: String) -> Result<WikiProject, String> {
     run_guarded("open_project", || {
         let root = Path::new(&path);
 
         validate_wiki_project_root(root)?;
+        let canonical = root
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve project path '{}': {}", path, e))?;
+        migrate_project_state(&canonical)?;
+        let canonical_path = allow_project_assets(&app, &canonical)?;
 
         // Derive project name from the directory name
-        let name = root
+        let name = canonical
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown")
@@ -258,9 +269,19 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
         Ok(WikiProject {
             name,
             // Forward slashes for cross-platform consistency in the TS layer.
-            path: path.replace('\\', "/"),
+            path: canonical_path,
         })
     })
+}
+
+fn allow_project_assets(app: &AppHandle, root: &Path) -> Result<String, String> {
+    let canonical = root
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve project asset scope: {error}"))?;
+    app.asset_protocol_scope()
+        .allow_directory(&canonical, true)
+        .map_err(|error| format!("Failed to allow project previews: {error}"))?;
+    Ok(canonical.to_string_lossy().replace('\\', "/"))
 }
 
 #[tauri::command]

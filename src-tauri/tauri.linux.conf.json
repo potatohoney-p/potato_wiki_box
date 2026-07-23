@@ -1,5 +1,10 @@
 {
   "bundle": {
-    "resources": ["pdfium/libpdfium.so"]
+    "resources": {
+      "pdfium/libpdfium.so": "pdfium/libpdfium.so",
+      "../mcp-server/dist/index.js": "mcp-server/dist/index.js",
+      "../mcp-server/package.json": "mcp-server/package.json",
+      "../mcp-server/LICENSE": "mcp-server/LICENSE"
+    }
   }
 }

@@ -2,6 +2,7 @@ import { getFileName, normalizePath } from "@/lib/path-utils"
 
 const RAW_SOURCES_PREFIX = "raw/sources/"
 const RAW_SOURCES_MARKER = "/raw/sources/"
+const WIKI_PREFIX = "wiki/"
 const MAX_SOURCE_SUMMARY_SLUG_LENGTH = 120
 const FALLBACK_SOURCE_PART = "source"
 
@@ -20,6 +21,22 @@ export function sourceIdentityForPath(projectPath: string, sourcePath: string): 
   if (markerIndex >= 0) {
     return sp.slice(markerIndex + RAW_SOURCES_MARKER.length)
   }
+
+  // Saved queries and Deep Research pages already live inside `wiki/` when
+  // they are re-ingested to discover more connections. Preserve that path in
+  // their identity so the generated source summary cannot share a basename
+  // with the original wiki page and become an ambiguous wikilink target.
+  const projectPrefix = `${pp}/`
+  if (spKey.startsWith(projectPrefix.toLowerCase())) {
+    const projectRelative = sp.slice(projectPrefix.length)
+    if (projectRelative.toLowerCase().startsWith(WIKI_PREFIX)) {
+      return projectRelative
+    }
+  }
+  if (spKey.startsWith(WIKI_PREFIX)) {
+    return sp
+  }
+
   return getFileName(sp)
 }
 

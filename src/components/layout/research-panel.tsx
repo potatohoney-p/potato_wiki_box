@@ -20,6 +20,7 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { useTranslation } from "react-i18next"
+import { stripHtmlComments } from "@/lib/wikilink-transform"
 
 export function ResearchPanel() {
   const { t } = useTranslation()
@@ -59,8 +60,11 @@ export function ResearchPanel() {
           )}
         </div>
         <button
+          type="button"
           onClick={() => setPanelOpen(false)}
           className="rounded p-1 text-muted-foreground hover:bg-accent"
+          aria-label={t("research.close", { defaultValue: "Close research panel" })}
+          title={t("research.close", { defaultValue: "Close research panel" })}
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -79,7 +83,15 @@ export function ResearchPanel() {
           className="flex-1 rounded border bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
           placeholder={t("research.inputPlaceholder")}
         />
-        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={handleStartResearch} disabled={!inputValue.trim()}>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          onClick={handleStartResearch}
+          disabled={!inputValue.trim()}
+          aria-label={t("research.send", { defaultValue: "Start research" })}
+          title={t("research.send", { defaultValue: "Start research" })}
+        >
           <Send className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -208,7 +220,7 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
               },
             }}
           >
-            {answer}
+            {stripHtmlComments(answer)}
           </ReactMarkdown>
         )}
         {isStreaming && <span className="animate-pulse">▊</span>}

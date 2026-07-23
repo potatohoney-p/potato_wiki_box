@@ -1,41 +1,95 @@
+/** Hide Markdown HTML comments while preserving literal code examples. */
+export function stripHtmlComments(markdown: string): string {
+  if (!markdown.includes("<!--")) return markdown
+
+  const lines = markdown.match(/[^\n]*\n|[^\n]+$/g) ?? []
+  let fence: { marker: "`" | "~"; length: number } | null = null
+  let inlineTicks = 0
+  let inComment = false
+  let output = ""
+
+  for (const line of lines) {
+    const lineText = line.endsWith("\n")
+      ? line.slice(0, -1).replace(/\r$/, "")
+      : line
+
+    if (fence) {
+      output += line
+      const closing = lineText.match(/^ {0,3}(`+|~+)[ \t]*$/)
+      if (
+        closing &&
+        closing[1][0] === fence.marker &&
+        closing[1].length >= fence.length
+      ) {
+        fence = null
+      }
+      continue
+    }
+
+    if (!inComment && inlineTicks === 0) {
+      const opening = lineText.match(/^ {0,3}(`{3,}|~{3,})/)
+      if (opening) {
+        fence = {
+          marker: opening[1][0] === "~" ? "~" : "`",
+          length: opening[1].length,
+        }
+        output += line
+        continue
+      }
+
+      // Preserve indented code examples so literal comments remain visible.
+      if (/^(?: {4}|\t)/.test(lineText)) {
+        output += line
+        continue
+      }
+    }
+
+    for (let index = 0; index < line.length;) {
+      if (inComment) {
+        if (line.startsWith("-->", index)) {
+          inComment = false
+          index += 3
+        } else if (line.startsWith("\r\n", index)) {
+          output += "\r\n"
+          index += 2
+        } else if (line[index] === "\n") {
+          output += "\n"
+          index += 1
+        } else {
+          index += 1
+        }
+        continue
+      }
+
+      if (inlineTicks === 0 && line.startsWith("<!--", index)) {
+        inComment = true
+        index += 4
+        continue
+      }
+
+      if (line[index] === "`") {
+        let end = index + 1
+        while (line[end] === "`") end += 1
+        const runLength = end - index
+        output += line.slice(index, end)
+        if (inlineTicks === 0) inlineTicks = runLength
+        else if (inlineTicks === runLength) inlineTicks = 0
+        index = end
+        continue
+      }
+
+      output += line[index]
+      index += 1
+    }
+  }
+
+  return output
+}
+
 /**
- * Convert Obsidian-style `[[target]]` and `[[target|alias]]` wiki
- * links inside a markdown body to standard markdown links so a
- * commonmark renderer (Milkdown / ReactMarkdown) styles them as
- * links instead of dumping the bracket syntax as raw text.
- *
- * Output format: `[label](#target)` — using a fragment href so
- * Tauri's webview doesn't try to navigate externally on click.
- * In-app navigation can be wired up later via a click intercept
- * on `<a href="#…">` elements; for now the goal is just to stop
- * the wikilinks from looking like "raw code".
- *
- * Skips content inside fenced code blocks (```…```) and inline
- * code spans (`…`) so wikilinks shown as code examples in
- * documentation don't get mangled.
- */
-/**
- * Convert Obsidian-style image/file embeds `![[target]]` (and
- * `![[target|alias]]`) into standard CommonMark image syntax
- * `![alt](target)` so a commonmark renderer actually displays them.
- *
- * Obsidian's embed syntax is a superset of CommonMark that react-
- * markdown does NOT understand — left untouched, `![[../assets/x.png]]`
- * renders as literal text. The feishu-to-md export skill emits this
- * form by default ("Obsidian mode"), so without this rewrite every
- * exported image is invisible in the app.
- *
- * The `target` is preserved verbatim as the image URL (NOT URL-
- * encoded) — `resolveMarkdownImageSrc` expects raw filesystem-style
- * relative paths like `../assets/x.png` or `media/slug/img.png`.
- * The alias (after `|`), if present, becomes the alt text.
- *
- * Must run BEFORE `transformWikilinks`, otherwise the generic
- * `[[…]]` → `[label](#frag)` rule would mangle the embed target
- * into a fragment link.
- *
- * Skips fenced code blocks and inline code spans so documentation
- * showing the syntax literally isn't rewritten.
+ * Convert Obsidian image embeds into CommonMark images for display.
+ * Run this before `transformWikilinks` so the generic link pass cannot
+ * turn an image target into a fragment link.
  */
 export function transformImageEmbeds(body: string): string {
   if (!body.includes("![[")) return body
@@ -76,6 +130,10 @@ function replaceImageEmbeds(text: string): string {
   )
 }
 
+/**
+ * Convert Obsidian-style wiki links into in-app fragment links while
+ * preserving fenced and inline code examples.
+ */
 export function transformWikilinks(body: string): string {
   if (!body.includes("[[")) return body
 

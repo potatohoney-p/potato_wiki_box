@@ -1,17 +1,114 @@
 mod api_server;
 mod clip_server;
 mod commands;
+mod migration;
 mod panic_guard;
 mod proxy;
 mod tray;
 mod types;
 
 use panic_guard::run_guarded;
-use std::sync::Mutex;
-use tauri::Manager;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
+use tauri::{Emitter, Manager};
 
 struct CloseBehaviorState(Mutex<String>);
 struct TrayAvailabilityState(Mutex<bool>);
+struct AppMigrationState(Mutex<Option<String>>);
+static QUIT_PENDING: AtomicBool = AtomicBool::new(false);
+static QUIT_FRONTEND_READY: AtomicBool = AtomicBool::new(false);
+
+fn emit_graceful_quit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    app.emit("potato-box://quit-requested", ())
+        .map_err(|error| format!("Failed to request a graceful quit: {error}"))
+}
+
+pub(crate) fn request_graceful_quit<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), String> {
+    if QUIT_PENDING.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    if QUIT_FRONTEND_READY.load(Ordering::SeqCst) {
+        emit_graceful_quit(app).inspect_err(|_| {
+            QUIT_PENDING.store(false, Ordering::SeqCst);
+        })
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn frontend_ready_for_quit(app: tauri::AppHandle) -> Result<(), String> {
+    QUIT_FRONTEND_READY.store(true, Ordering::SeqCst);
+    if QUIT_PENDING.load(Ordering::SeqCst) {
+        emit_graceful_quit(&app).inspect_err(|_| {
+            QUIT_PENDING.store(false, Ordering::SeqCst);
+        })?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn complete_graceful_quit(app: tauri::AppHandle) -> Result<(), String> {
+    if !QUIT_PENDING.swap(false, Ordering::SeqCst) {
+        return Err("No graceful quit is pending".to_string());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.destroy();
+    }
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_graceful_quit() {
+    QUIT_PENDING.store(false, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn app_migration_error(
+    state: tauri::State<'_, AppMigrationState>,
+) -> Result<Option<String>, String> {
+    state
+        .0
+        .lock()
+        .map(|error| error.clone())
+        .map_err(|_| "App migration state is unavailable".to_string())
+}
+
+#[tauri::command]
+fn retry_app_data_migration(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppMigrationState>,
+) -> Result<(), String> {
+    match migration::migrate_legacy_app_data(&app) {
+        Ok(()) => {
+            migration::clear_app_migration_failure(&app);
+            *state
+                .0
+                .lock()
+                .map_err(|_| "App migration state is unavailable".to_string())? = None;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = migration::write_app_migration_failure(&app, &error);
+            *state
+                .0
+                .lock()
+                .map_err(|_| "App migration state is unavailable".to_string())? =
+                Some(error.clone());
+            Err(error)
+        }
+    }
+}
 
 #[tauri::command]
 fn clip_server_status() -> String {
@@ -43,7 +140,6 @@ fn mcp_server_entry_path(app: tauri::AppHandle) -> Result<String, String> {
     run_guarded("mcp_server_entry_path", || {
         let relative = std::path::Path::new("mcp-server")
             .join("dist")
-            .join("src")
             .join("index.js");
         let mut candidates = Vec::new();
 
@@ -77,7 +173,7 @@ fn mcp_server_entry_path(app: tauri::AppHandle) -> Result<String, String> {
             }
         }
 
-        Err("MCP server entry was not found. Run `npm run mcp:build` from the LLM Wiki repository, then reopen Settings.".to_string())
+        Err("MCP server entry was not found. Run `npm run mcp:build` from the potato box repository, then reopen Settings.".to_string())
     })
 }
 
@@ -134,8 +230,6 @@ fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    clip_server::start_clip_server();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -150,6 +244,13 @@ pub fn run() {
         // from Rust, never the webview.
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
+            let migration_error = migration::migrate_legacy_app_data(app.handle()).err();
+            if let Some(error) = migration_error.as_deref() {
+                eprintln!("[migration] app-data migration failed: {error}");
+                let _ = migration::write_app_migration_failure(app.handle(), error);
+            } else {
+                migration::clear_app_migration_failure(app.handle());
+            }
             // Let the PDF extractor find the bundled pdfium dynamic
             // library via Tauri's platform-correct resource path.
             if let Ok(dir) = app.path().resource_dir() {
@@ -182,9 +283,13 @@ pub fn run() {
             app.manage(commands::file_sync::FileSyncState::default());
             app.manage(CloseBehaviorState(Mutex::new("minimize".to_string())));
             app.manage(TrayAvailabilityState(Mutex::new(false)));
-            // Start the API before optional desktop integrations so the
-            // backend is reachable if tray setup or another integration fails.
+            app.manage(AppMigrationState(Mutex::new(migration_error)));
+            // Both loopback servers receive the AppHandle so authentication
+            // and project resolution stay backend-owned. Start them before
+            // optional desktop integrations so tray failures cannot disable
+            // automation or the authenticated browser clipper.
             api_server::start_api_server(app.handle().clone());
+            clip_server::start_clip_server(app.handle().clone());
             let tray_available = match tray::create_tray(app.handle()) {
                 Ok(()) => true,
                 Err(err) => {
@@ -204,6 +309,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::fs::read_file,
+            commands::fs::read_text_file_limited,
             commands::fs::write_file,
             commands::fs::write_file_base64,
             commands::fs::write_file_atomic,
@@ -212,6 +318,7 @@ pub fn run() {
             commands::fs::copy_directory,
             commands::fs::preprocess_file,
             commands::fs::delete_file,
+            commands::fs::delete_managed_review_file,
             commands::fs::find_related_wiki_pages,
             commands::fs::create_directory,
             commands::fs::file_exists,
@@ -219,11 +326,16 @@ pub fn run() {
             commands::fs::get_file_size,
             commands::fs::get_file_md5,
             commands::fs::read_file_as_base64,
+            commands::backup::create_project_backup,
+            commands::backup::restore_project_backup,
             commands::project::create_project,
             commands::project::open_project,
             commands::project::open_project_folder,
             commands::search::search_project,
             clip_server_status,
+            clip_server::clip_register_projects,
+            clip_server::clip_pending_clips,
+            clip_server::clip_acknowledge_clips,
             api_server_status,
             api_server_reload_config,
             mcp_server_entry_path,
@@ -257,6 +369,11 @@ pub fn run() {
             commands::file_sync::ignore_file_change_task,
             set_proxy_env,
             set_close_behavior,
+            frontend_ready_for_quit,
+            complete_graceful_quit,
+            cancel_graceful_quit,
+            app_migration_error,
+            retry_app_data_migration,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -266,10 +383,7 @@ pub fn run() {
                 let app = window.app_handle().clone();
                 match behavior.as_str() {
                     "exit" => {
-                        tauri::async_runtime::spawn(async move {
-                            let _ = win.destroy();
-                            app.exit(0);
-                        });
+                        let _ = request_graceful_quit(&app);
                     }
                     "minimize" => {
                         if tray_available(window) {
@@ -284,9 +398,9 @@ pub fn run() {
                             let confirmed = app
                                 .dialog()
                                 .message(
-                                    "Quit LLM Wiki? Choose Quit to exit. Choose Hide Window to keep background features running.",
+                                    "Quit potato box? Choose Quit to exit. Choose Hide Window to keep background features running.",
                                 )
-                                .title("LLM Wiki")
+                                .title("potato box")
                                 .buttons(MessageDialogButtons::OkCancelCustom(
                                     "Quit".to_string(),
                                     "Hide Window".to_string(),
@@ -295,8 +409,7 @@ pub fn run() {
                                 .blocking_show();
 
                             if confirmed {
-                                let _ = win.destroy();
-                                app.exit(0);
+                                let _ = request_graceful_quit(&app);
                             } else {
                                 let _ = win.hide();
                             }

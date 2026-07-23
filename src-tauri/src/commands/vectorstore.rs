@@ -45,7 +45,20 @@ pub struct ChunkUpsertInput {
 }
 
 fn db_path(project_path: &str) -> String {
-    format!("{}/.llm-wiki/lancedb", project_path.replace('\\', "/"))
+    let normalized = project_path.replace('\\', "/");
+    let project_root = if normalized
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("//?/UNC/"))
+    {
+        format!("//{}", &normalized[8..])
+    } else {
+        normalized
+            .strip_prefix("//?/")
+            .unwrap_or(&normalized)
+            .to_string()
+    };
+
+    format!("{}/.potato-box/lancedb", project_root.trim_end_matches('/'))
 }
 
 fn vectorstore_v2_lock(project_path: &str) -> Arc<tokio::sync::RwLock<()>> {
@@ -874,6 +887,41 @@ mod tests_v2 {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn db_path_strips_windows_verbatim_drive_prefixes() {
+        let expected = "C:/Users/Me/Wiki/.potato-box/lancedb";
+
+        assert_eq!(db_path(r"\\?\C:\Users\Me\Wiki"), expected);
+        assert_eq!(db_path("//?/C:/Users/Me/Wiki"), expected);
+        assert_eq!(db_path("C:/Users/Me/Wiki/"), expected);
+    }
+
+    #[test]
+    fn db_path_preserves_windows_verbatim_unc_paths() {
+        assert_eq!(
+            db_path(r"\\?\UNC\server\share\Wiki"),
+            "//server/share/Wiki/.potato-box/lancedb"
+        );
+        assert_eq!(
+            db_path("//?/unc/server/share/Wiki"),
+            "//server/share/Wiki/.potato-box/lancedb"
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn vector_health_commands_accept_persisted_windows_verbatim_paths() {
+        let project = tmp_project();
+        let normalized = project.to_string_lossy().replace('\\', "/");
+        let persisted_path = format!("//?/{normalized}");
+
+        assert_eq!(
+            vector_count_chunks(persisted_path.clone()).await.unwrap(),
+            0
+        );
+        assert_eq!(vector_legacy_row_count(persisted_path).await.unwrap(), 0);
+    }
+
     /// Unique temp project dir per test. `tokio::test` runs tests in
     /// parallel threads so wall-clock nanoseconds aren't sufficient — a
     /// process-wide atomic counter guarantees uniqueness even when two
@@ -888,7 +936,7 @@ mod tests_v2 {
             .unwrap()
             .as_nanos();
         let id = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let p = std::env::temp_dir().join(format!("llm-wiki-vtest-{}-{}", ts, id));
+        let p = std::env::temp_dir().join(format!("potato-box-vtest-{}-{}", ts, id));
         std::fs::create_dir_all(&p).unwrap();
         p
     }
@@ -918,7 +966,7 @@ mod tests_v2 {
 
     fn chunk_table_version_count(project_path: &PathBuf) -> usize {
         let versions_dir = project_path
-            .join(".llm-wiki")
+            .join(".potato-box")
             .join("lancedb")
             .join(format!("{TABLE_V2}.lance"))
             .join("_versions");

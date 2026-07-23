@@ -10,7 +10,34 @@ permissions:
   contents: write
 
 jobs:
+  quality:
+    name: Quality gate
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix mcp-server
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit, MCP, and documentation tests
+        run: npm test
+      - name: Dependency audit
+        run: |
+          npm audit --audit-level=high
+          npm --prefix mcp-server audit --audit-level=high
+
   build:
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
@@ -34,10 +61,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: ${{ matrix.rust_target }}
 
@@ -73,22 +100,28 @@ jobs:
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows-latest'
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
 
       - name: Install frontend dependencies
-        run: npm install
+        run: |
+          npm ci
+          npm ci --prefix mcp-server
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_POTATO_BOX_RELEASE_REPOSITORY: ${{ github.repository }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -102,7 +135,7 @@ jobs:
           # just produces bundle artifacts — useful for testing a
           # branch build without polluting the Releases page.
           tagName: ${{ github.event_name == 'push' && github.ref_name || '' }}
-          releaseName: ${{ github.event_name == 'push' && format('LLM Wiki {0}', github.ref_name) || '' }}
+          releaseName: ${{ github.event_name == 'push' && format('potato box {0}', github.ref_name) || '' }}
           releaseBody: 'See the assets below for download links.'
           releaseDraft: false
           prerelease: false
@@ -115,7 +148,7 @@ jobs:
       # tag pushes since the release page already has them.
       - name: Upload bundles as workflow artifacts (manual runs only)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bundle-${{ matrix.platform }}
           # Glob covers both targeted (e.g.
@@ -139,7 +172,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Sync extension manifest version and zip
         run: |
@@ -155,7 +188,7 @@ jobs:
             fs.writeFileSync(p, JSON.stringify(m, null, 2) + '\n');
           "
           mkdir -p dist-extension
-          (cd extension && zip -r "../dist-extension/llm-wiki-extension-${APP_VERSION}.zip" . -x "*.DS_Store")
+          (cd extension && zip -r "../dist-extension/potato-box-extension-${APP_VERSION}.zip" . -x "*.DS_Store")
           ls -la dist-extension
 
       - name: Attach extension zip to release
