@@ -17,6 +17,9 @@
   "engines": {
     "node": ">=22"
   },
+  "overrides": {
+    "@hono/node-server": "2.0.11"
+  },
   "keywords": [
     "mcp",
     "potato-box",

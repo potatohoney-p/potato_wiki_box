@@ -8,6 +8,9 @@
   "engines": {
     "node": ">=22"
   },
+  "overrides": {
+    "@hono/node-server": "2.0.11"
+  },
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --build --pretty",
