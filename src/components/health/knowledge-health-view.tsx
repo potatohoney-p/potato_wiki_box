@@ -72,7 +72,7 @@ type OperationState =
   | { kind: "error"; message: string }
 
 export function KnowledgeHealthView() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const project = useWikiStore((state) => state.project)
   const dataVersion = useWikiStore((state) => state.dataVersion)
   const llmConfig = useWikiStore((state) => state.llmConfig)
@@ -300,7 +300,9 @@ export function KnowledgeHealthView() {
             <section className="border-b py-5">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold">{t("health.findings.title", { defaultValue: "Findings" })}</h2>
-                <span className="text-xs text-muted-foreground">{new Date(snapshot.scannedAt).toLocaleString()}</span>
+                <span className="text-xs text-muted-foreground">
+                  {new Date(snapshot.scannedAt).toLocaleString(i18n.resolvedLanguage ?? i18n.language)}
+                </span>
               </div>
               {findings.length === 0 ? (
                 <div className="flex items-center gap-2 py-3 text-sm text-emerald-700 dark:text-emerald-400">

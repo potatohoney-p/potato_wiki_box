@@ -4,13 +4,13 @@ This directory contains repository presentation assets, not application runtime 
 
 ## Product screenshots
 
-The screenshots were captured from the packaged potato box desktop application against a synthetic QA project. They contain no private user documents or credentials.
+The screenshots were captured from the native potato box desktop application during a Playwright-driven QA session against an English-only synthetic Atlas Research project. They contain no private user documents or credentials. English UI and content are used consistently across every localized README.
 
 - `workspace-graph.png`: linked knowledge graph
 - `linked-page.png`: generated page with source and related-page context
 - `semantic-search.png`: workspace search results
 - `review-queue.png`: human review queue
-- `knowledge-health.png`: release-build Knowledge Health report
+- `knowledge-health.png`: Knowledge Health dashboard
 - `mobile-welcome.png`: reduced-width welcome screen
 
 ## Brand artwork

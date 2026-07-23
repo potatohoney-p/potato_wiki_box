@@ -71,7 +71,7 @@ It is designed for durable research, not disposable chat. Conversations can use 
   </tr>
 </table>
 
-These are captures from the packaged desktop app using a synthetic QA project. See the [asset notes](assets/readme/README.md) for provenance and reuse guidance.
+These Playwright-verified captures come from the native desktop app using an English-only synthetic Atlas Research project. See the [asset notes](assets/readme/README.md) for provenance and reuse guidance.
 
 ## How knowledge accumulates
 

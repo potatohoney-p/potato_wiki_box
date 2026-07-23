@@ -19,7 +19,7 @@ interface Props {
 }
 
 export function ScheduledImportSection({ draft, setDraft }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const scheduledImportConfig = useWikiStore((s) => s.scheduledImportConfig)
   const [isScanning, setIsScanning] = useState(false)
@@ -56,7 +56,7 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
   }, [project, draft.scheduledImportPath, isScanning])
 
   const lastScanDate = scheduledImportConfig.lastScan
-    ? new Date(scheduledImportConfig.lastScan).toLocaleString()
+    ? new Date(scheduledImportConfig.lastScan).toLocaleString(i18n.resolvedLanguage ?? i18n.language)
     : t("settings.sections.scheduledImport.never", { defaultValue: "Never" })
   const managedPathSelected = Boolean(
     project &&
