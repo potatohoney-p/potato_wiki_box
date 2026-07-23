@@ -32,20 +32,20 @@ tauri-plugin-store = "2.4.2"
 tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tiny_http = "0.12"
-zip = "2"
-calamine = "0.34.0"
+zip = "8"
+calamine = "0.36.0"
 docx-rs = "0.4.20"
-office_oxide = "=0.1.2"
-lancedb = "0.27.2"
+office_oxide = "=0.1.8"
+lancedb = "0.31.0"
 # tokio provided by tauri runtime for async commands
-arrow-array = "57"
-arrow-schema = "57"
+arrow-array = "58"
+arrow-schema = "58"
 futures = "0.3"
 # Claude Code CLI subprocess transport: spawn `claude` as a child process,
 # stream stdout line-by-line back to the frontend. tokio::process gives us
 # async io and clean cancellation; `which` locates the binary on PATH.
 tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt"] }
-which = "7"
+which = "8"
 uuid = { version = "1", features = ["v4"] }
 # Multimodal image extraction (Phase 1):
 #   `image` re-encodes pdfium's raw bitmap output to PNG so the IPC
@@ -59,8 +59,8 @@ uuid = { version = "1", features = ["v4"] }
 #   extraction layer can also expose the hash if a caller wants it.
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
-sha2 = "0.10"
-md-5 = "0.10"
+sha2 = "0.11"
+md-5 = "0.11"
 notify = "8"
 walkdir = "2"
 
