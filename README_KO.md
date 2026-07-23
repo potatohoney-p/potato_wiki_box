@@ -123,7 +123,7 @@ potato box는 문서와 웹 자료를 가져와 구조화된 Markdown 페이지�
 
 필요 환경:
 
-- Node.js 20 이상
+- Node.js 22 이상
 - `rustfmt`, `clippy`를 포함한 Rust stable
 - Protocol Buffers 컴파일러(`protoc`)
 - 운영체제별 [Tauri 2 사전 요구 사항](https://v2.tauri.app/start/prerequisites/)

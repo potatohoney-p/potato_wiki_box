@@ -34,7 +34,7 @@ potato box は文書を取り込み、構造化された Markdown ページ、�
 
 ## 開発開始
 
-Node.js 20 以降、Rust stable、`protoc`、OS ごとの [Tauri 2 前提条件](https://v2.tauri.app/start/prerequisites/)が必要です。
+Node.js 22 以降、Rust stable、`protoc`、OS ごとの [Tauri 2 前提条件](https://v2.tauri.app/start/prerequisites/)が必要です。
 
 ```bash
 npm ci

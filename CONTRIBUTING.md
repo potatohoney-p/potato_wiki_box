@@ -13,7 +13,7 @@ Thank you for improving potato box. Contributions should preserve local-first be
 
 Requirements:
 
-- Node.js 20+
+- Node.js 22+
 - Rust stable with `rustfmt` and `clippy`
 - `protoc`
 - Tauri 2 operating-system prerequisites

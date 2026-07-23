@@ -5,6 +5,9 @@
   "description": "A local-first AI workspace for inspectable personal knowledge bases",
   "license": "GPL-3.0-only",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --build --pretty",

@@ -123,7 +123,7 @@ Download the artifact for your platform from [GitHub Releases](https://github.co
 
 Requirements:
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - Rust stable with `rustfmt` and `clippy`
 - Protocol Buffers compiler (`protoc`)
 - The [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system

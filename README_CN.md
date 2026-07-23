@@ -34,7 +34,7 @@ potato box 导入文档，生成结构化 Markdown 页面，维护链接与来�
 
 ## 开始开发
 
-需要 Node.js 20+、Rust stable、`protoc`，以及对应平台的 [Tauri 2 前置依赖](https://v2.tauri.app/start/prerequisites/)。
+需要 Node.js 22+、Rust stable、`protoc`，以及对应平台的 [Tauri 2 前置依赖](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
 npm ci
